@@ -1,0 +1,121 @@
+# csub broker policy for Janelia's LSF cluster.
+#
+# Install as ~/.config/csub/broker.toml on the submit host and edit the [broker] section
+# for your lab: image, allowed roots, hosts. The [limits] and [queues.*] tables encode the
+# cluster's slot/memory model, queue runtimes and prices (see CLAUDE.md, "Janelia LSF
+# facts"); they are also what the test-suite validates against.
+
+[broker]
+state_dir = "~/.csub"
+sandbox_scripts_dir = "~/.local/share/csub/agentic-sandbox/scripts"
+default_image = "ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-lite:latest"
+allowed_images = [
+  "ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-*:*",
+]
+allowed_roots = ["/groups/CHANGEME", "/nrs/CHANGEME"]
+denied_roots = []
+readonly_roots = []
+allowed_hosts = [
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "api.anthropic.com",
+]
+scratch = true
+scratch_root = "/scratch"
+keep_id = true
+inject_client = true
+env_allow = ["OMP_NUM_THREADS", "ANTHROPIC_*"]
+lsf_extra_allow = []
+forbidden_name_tokens = ["spark", "janelia", "master", "int"]
+
+[limits]
+max_slots = 128
+max_gpus = 8
+max_walltime_min = 20160
+max_estimated_cost_usd = 200
+max_pending_per_session = 0
+default_cpu_walltime_min = 60
+default_gpu_walltime_min = 120
+cpu_short_queue = "short"
+cpu_default_queue = "local"
+slot_price_usd_per_hour = 0.05
+
+[queues.short]
+mem_per_slot_mb = 15360
+max_walltime_min = 60
+
+[queues.local]
+mem_per_slot_mb = 15360
+max_walltime_min = 20160
+
+[queues.gpu_short]
+mem_per_slot_mb = 15360
+max_walltime_min = 60
+gpu = true
+slots_per_gpu = 8
+gpu_price_usd_per_hour = 0.10
+gmem_allowed = true
+
+[queues.gpu_l4]
+mem_per_slot_mb = 15360
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 8
+gpu_price_usd_per_hour = 0.10
+
+[queues.gpu_l4_16]
+mem_per_slot_mb = 15360
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 16
+gpu_price_usd_per_hour = 0.10
+
+[queues.gpu_l4_large]
+mem_per_slot_mb = 15360
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 64
+gpu_price_usd_per_hour = 0.10
+
+[queues.gpu_rtx6000]
+mem_per_slot_mb = 15360
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 16
+gpu_price_usd_per_hour = 0.50
+max_gpus = 1
+
+[queues.gpu_a100]
+mem_per_slot_mb = 40960
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 12
+gpu_price_usd_per_hour = 0.20
+
+[queues.gpu_h100]
+mem_per_slot_mb = 40960
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 12
+gpu_price_usd_per_hour = 0.65
+
+[queues.gpu_h200]
+mem_per_slot_mb = 40960
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 12
+gpu_price_usd_per_hour = 0.80
+
+[queues.gpu_b300]
+mem_per_slot_mb = 40960
+max_walltime_min = 20160
+gpu = true
+slots_per_gpu = 12
+gpu_price_usd_per_hour = 2.40
+
+[lsf]
+profile = "/etc/profile.d/profile.lsf.sh"
+bsub = "bsub"
+bjobs = "bjobs"
+bkill = "bkill"

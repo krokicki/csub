@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "csub"
+version = "0.1.0"
+description = "Sandboxed LSF job submission: a policy-enforcing broker between agents and bsub"
+requires-python = ">=3.9"
+dependencies = ["tomli>=2; python_version < '3.11'"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: POSIX :: Linux",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3", "jsonschema>=4.20"]
+
+[project.scripts]
+csub = "csub.cli:main"
+csub-mcp = "csub.mcp.server:main"
+csub-broker = "csub.broker.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/csub"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "deploy", "CLAUDE.md", "pyproject.toml"]
+
+# --- development environment -------------------------------------------------
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.9,<3.14"
+# sshd for tests/e2e (skipped when absent)
+openssh = "*"
+
+[tool.pixi.pypi-dependencies]
+csub = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.dependencies]
+pytest = ">=8"
+pytest-timeout = "*"
+ruff = "*"
+
+# agent-side extra, needs Python >= 3.10
+[tool.pixi.feature.mcp.pypi-dependencies]
+mcp = ">=2.3,<3"
+jsonschema = ">=4.20"
+
+# the floor: what RHEL 9's system Python offers on the submit host and compute nodes
+[tool.pixi.feature.py39.dependencies]
+python = "3.9.*"
+
+[tool.pixi.environments]
+default = { features = ["dev", "mcp"], solve-group = "default" }
+py39 = { features = ["dev", "py39"] }
+
+[tool.pixi.tasks]
+test = "pytest"
+test-py39 = "pytest -m 'not e2e'"
+test-unit = "pytest tests/unit"
+test-integration = "pytest tests/integration"
+test-e2e = "pytest tests/e2e"
+lint = "ruff check . && ruff format --check ."
+fmt = "ruff format ."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 120
+addopts = "-ra"
+markers = [
+  "integration: client -> broker -> fake LSF -> fake sandbox",
+  "e2e: needs a real sshd",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["tests/unit/snapshots"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
