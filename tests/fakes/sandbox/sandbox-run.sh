@@ -1,13 +1,13 @@
 #!/bin/bash
-# Fake of agentic-sandbox's scripts/podman-run.sh for tests: same flag shape, no podman.
+# Fake of agentic-sandbox's scripts/sandbox-run.sh for tests: same flag shape, no bwrap.
 #
 # Records the parsed invocation as one JSON line (appended to $CSUB_FAKE_SANDBOX_LOG when
-# set, and always written to $PWD/podman-run.json), scrubs the environment the way podman
+# set, and always written to $PWD/sandbox-run.json), scrubs the environment the way bwrap
 # would, then runs the command directly. CSUB_FAKE_SANDBOX_FAIL_RC=N simulates a sandbox
 # start failure (125 ~ image pull failure).
 set -euo pipefail
 
-IMAGE="ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-lite:latest"
+IMAGE=""
 RO=()
 RW=()
 ALLOW=()
@@ -19,16 +19,13 @@ OPENCODE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --image) IMAGE="$2"; shift 2 ;;
-    --ro) RO+=("$2"); shift 2 ;;
+        --ro) RO+=("$2"); shift 2 ;;
     --rw) RW+=("$2"); shift 2 ;;
     --allow) ALLOW+=("$2"); shift 2 ;;
-    --gpu) GPU=1; shift ;;
-    --keep-id) KEEP_ID=1; shift ;;
-    --scratch) SCRATCH=1; RW+=("/scratch/$(id -un)"); shift ;;
+            --scratch) SCRATCH=1; RW+=("/scratch/$(id -un)"); shift ;;
     --claude) CLAUDE=1; shift ;;
     --opencode) OPENCODE=1; shift ;;
-    -h|--help) echo "fake podman-run.sh"; exit 0 ;;
+    -h|--help) echo "fake sandbox-run.sh"; exit 0 ;;
     --) shift; break ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -50,7 +47,7 @@ ro, rest = rest[:n_ro], rest[n_ro:]
 rw, rest = rest[:n_rw], rest[n_rw:]
 allow, cmd = rest[:n_allow], rest[n_allow:]
 rec = {
-    "script": "podman-run.sh", "image": image, "ro": ro, "rw": rw, "allow": allow,
+    "script": "sandbox-run.sh", "image": image, "ro": ro, "rw": rw, "allow": allow,
     "gpu": gpu == "1", "keep_id": keep == "1", "scratch": scratch == "1",
     "claude": claude == "1", "opencode": opencode == "1",
     "cmd": cmd, "cwd": cwd, "pid": os.getppid(),
@@ -60,23 +57,19 @@ line = json.dumps(rec)
 if logfile:
     with open(logfile, "a") as f:
         f.write(line + "\n")
-with open(os.path.join(cwd, "podman-run.json"), "w") as f:
+with open(os.path.join(cwd, "sandbox-run.json"), "w") as f:
     f.write(line + "\n")
 PY
 
 if [[ -n "${CSUB_FAKE_SANDBOX_FAIL_RC:-}" ]]; then
-  echo "Error: fake podman failure (rc ${CSUB_FAKE_SANDBOX_FAIL_RC})" >&2
+  echo "Error: fake bwrap failure (rc ${CSUB_FAKE_SANDBOX_FAIL_RC})" >&2
   exit "${CSUB_FAKE_SANDBOX_FAIL_RC}"
 fi
 
-# What podman would provide inside the container: a clean environment.
+# bwrap --clearenv: only PATH/HOME/USER and friends survive.
 ENV=(env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-     container=podman "HOSTNAME=$(hostname)" "TERM=${TERM:-dumb}")
-if [[ $KEEP_ID -eq 1 ]]; then
-  ENV+=("HOME=$HOME")
-else
-  ENV+=("HOME=/root")
-fi
+     "HOSTNAME=$(hostname)" "TERM=${TERM:-dumb}")
+ENV+=("HOME=$HOME")
 
 if [[ ${#ALLOW[@]} -gt 0 ]]; then
   # Mirror the real script's indirection through a second shell when --allow is used.

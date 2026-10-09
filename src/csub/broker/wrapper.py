@@ -21,6 +21,7 @@ import os
 import shlex
 
 from csub import __version__
+from csub.broker.policy import SANDBOX_SCRIPTS
 from csub.broker.resolve import ResolvedJob
 
 SOCKET_NAME = "csub.sock"
@@ -93,18 +94,21 @@ def _allow_flags(hosts: tuple[str, ...]) -> list[str]:
     return [f"--allow {q(h)}" for h in hosts]
 
 
-def podman_run_line(
+def sandbox_run_line(
     job: ResolvedJob, *, scripts_dir: str, inner: str, client_src: str | None = None
 ) -> str:
-    """The podman-run.sh invocation as shell text, one flag (with its value) per line.
+    """The podman-run.sh / sandbox-run.sh invocation as shell text, one flag per line.
 
     Some arguments are deliberately shell expressions ("$SCRATCH", "$JOB_DIR/...") that the
-    wrapper expands at run time; everything agent-controlled is quoted.
+    wrapper expands at run time; everything agent-controlled is quoted. bwrap (sandbox-run.sh)
+    takes the same flags minus image, identity and GPU, which only mean something to podman.
     """
-    segments = [q(os.path.join(scripts_dir, "podman-run.sh"))]
-    if job.keep_id:
+    podman = job.sandbox == "podman"
+    segments = [q(os.path.join(scripts_dir, SANDBOX_SCRIPTS[job.sandbox]))]
+    if podman and job.keep_id:
         segments.append("--keep-id")
-    segments.append(f"--image {q(job.image)}")
+    if podman:
+        segments.append(f"--image {q(job.image)}")
     for m in job.mounts:
         segments.append(f"--{m.mode} {q(m.path)}")
     if job.scratch:
@@ -112,7 +116,7 @@ def podman_run_line(
     segments.append(f'--ro "$JOB_DIR/{SOCKET_NAME}"')
     if client_src:
         segments.append(f"--ro {q(client_src)}")
-    if job.gpus:
+    if podman and job.gpus:
         segments.append("--gpu")
     segments += _allow_flags(job.allow_hosts)
     segments.append(
@@ -158,7 +162,12 @@ def render_wrapper(
         "trap 'kill \"$BROKER_PID\" 2>/dev/null' EXIT",
         f'i=0; while [ ! -S "$JOB_DIR/{SOCKET_NAME}" ]; do '
         f'i=$((i + 1)); [ "$i" -gt 100 ] && exit {EXIT_NO_BROKER}; sleep 0.1; done',
-        podman_run_line(job, scripts_dir=scripts_dir, inner=inner, client_src=client_src),
+    ]
+    if job.sandbox == "bwrap":
+        # sandbox-run.sh binds $PWD read-write; that must be the job's cwd, never $JOB_DIR.
+        lines.append(f"cd {q(job.cwd)} || exit {EXIT_CD}")
+    lines += [
+        sandbox_run_line(job, scripts_dir=scripts_dir, inner=inner, client_src=client_src),
         "rc=$?",
         '[ -n "$SCRATCH" ] && rm -rf "$SCRATCH"',
         'echo "$rc" > "$JOB_DIR/exit_code"',

@@ -112,6 +112,7 @@ class ResolvedJob:
     scratch: bool
     scratch_root: str
     keep_id: bool
+    sandbox: str  # "podman" or "bwrap"
     depends_on: tuple[Dependency, ...]
     lsf_extra_argv: tuple[str, ...]
     estimated_max_cost_usd: float
@@ -142,6 +143,7 @@ class ResolvedJob:
             "gpus": self.gpus,
             "gpu_mem_gb": self.gpu_mem_gb,
             "image": self.image,
+            "sandbox": self.sandbox,
             "mounts": [m.to_dict() for m in self.mounts],
             "allow_hosts": list(self.allow_hosts),
             "scratch": self.scratch,
@@ -240,7 +242,16 @@ def check_name(name: str, policy: Policy, user: str) -> None:
         raise _policy(f"job name {name!r} contains forbidden token(s): {', '.join(bad)}")
 
 
-def check_image(image: str | None, policy: Policy) -> str:
+def check_image(image: str | None, policy: Policy, *, sandbox: str = "podman") -> str:
+    if sandbox == "bwrap":
+        # bwrap runs on the node's own toolchain; there is no image to honour. The default
+        # image is accepted as a no-op so a client.toml `image` does not break jobs.
+        if image is not None and image != policy.default_image:
+            raise _policy(
+                f"image {image!r}: this queue runs jobs under bwrap on the node's own toolchain, "
+                "which takes no image; omit image (see csub probe)"
+            )
+        return ""
     if image is None:
         return policy.default_image
     registry = image_registry(image)
@@ -440,7 +451,10 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
             f"exceeds the per-job cap of ${lim.max_estimated_cost_usd:.2f}"
         )
 
-    image = check_image(spec.image, policy)
+    sandbox = policy.sandbox
+    if spec.gpus and sandbox == "bwrap":
+        raise _policy("GPU jobs need podman but this broker runs jobs under bwrap (policy sandbox)")
+    image = check_image(spec.image, policy, sandbox=sandbox)
     env = check_env(spec.env, policy)
     hosts = check_hosts(spec.allow_hosts, policy)
     if spec.scratch and not policy.scratch:
@@ -473,6 +487,7 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
         scratch=spec.scratch,
         scratch_root=policy.scratch_root,
         keep_id=policy.keep_id,
+        sandbox=sandbox,
         depends_on=deps,
         lsf_extra_argv=(("-P", policy.lsf.project) if policy.lsf.project else ()) + extra,
         estimated_max_cost_usd=cost,
