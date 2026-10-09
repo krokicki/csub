@@ -31,7 +31,8 @@ csub CLI / MCP / Python ──ssh──▶ csub-broker ──bsub──▶ LSF �
   the request, renders a wrapper script, and calls `bsub`, `bjobs` or `bkill`.
 - **Transports.** `ssh` from the agent container (a key whose only allowed command is the
   broker), `local` for a person on the submit host, and `unix` from inside a job (a per-job
-  broker started by the wrapper; its socket is mounted into the job's container).
+  broker started by the wrapper; its socket is mounted into the job's container) or from a
+  sandbox started beside a host-side `csub-broker --serve`.
 - **Sandbox.** Jobs run in `podman-run.sh` from
   [agentic-sandbox](https://github.com/JaneliaScientificComputingSystems/agentic-sandbox),
   which handles rootless podman under LSF, GPUs, network isolation and cleanup.
@@ -49,7 +50,9 @@ csub CLI / MCP / Python ──ssh──▶ csub-broker ──bsub──▶ LSF �
 - LSF spools the job script at submit time, so it cannot be changed afterwards. Agent text may
   not contain `#BSUB` lines.
 - Environment variables are set inside the sandbox, never on the `bsub` command line.
-- The policy file lives outside every mount and is read on every request.
+- The policy file lives outside csub-managed job mounts and is read on every request. The
+  SSH client setup may expose it read-only through a shared home directory's config mount; see
+  [installation](deploy/INSTALL.md). The agent must never be able to modify it.
 
 ## Using it
 
