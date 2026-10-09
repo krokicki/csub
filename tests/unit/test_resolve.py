@@ -398,3 +398,17 @@ def test_ctx_defaults_use_real_filesystem(tmp_home):
     c = ResolveContext(user="u", home=str(tmp_home))
     assert c.isdir(str(tmp_home)) and c.realpath(str(tmp_home)) == os.path.realpath(str(tmp_home))
     assert c.lookup_job("1") is None
+
+
+def test_policy_project(make_spec, ctx, make_policy):
+    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": [r"-R .*"]})
+    job = resolve(make_spec(lsf_extra=["-R select[avx2]"]), p, ctx)
+    assert job.lsf_extra_argv == ("-P", "proj", "-R", "select[avx2]")
+    assert job.bsub_args("/state")[-4:] == ["-P", "proj", "-R", "select[avx2]"]
+    # with a project in the policy, a request may not supply its own -P (LSF would take the last)
+    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": [".*"]})
+    reject("policy_violation", "set by the policy", make_spec(lsf_extra=["-P other"]), p, ctx)
+    reject("policy_violation", "set by the policy", make_spec(lsf_extra=["-Pother"]), p, ctx)
+    # without one, -P stays available through lsf_extra as before
+    p = make_policy(broker={"lsf_extra_allow": [".*"]})
+    assert resolve(make_spec(lsf_extra=["-P other"]), p, ctx).lsf_extra_argv == ("-P", "other")

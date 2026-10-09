@@ -116,6 +116,7 @@ gpu_price_usd_per_hour = 2.40
 
 [lsf]
 profile = "/etc/profile.d/profile.lsf.sh"
+project = "CHANGEME"   # Janelia bills every job to a lab or project (bsub -P)
 bsub = "bsub"
 bjobs = "bjobs"
 bkill = "bkill"

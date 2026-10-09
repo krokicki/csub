@@ -66,6 +66,7 @@ class LsfConfig:
     bjobs: str = "bjobs"
     bkill: str = "bkill"
     timeout_s: int = 120
+    project: str = ""  # bsub -P, the lab or project every job is billed to
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ _LSF_KEYS: dict[str, tuple[str, bool]] = {
     "bjobs": ("str", False),
     "bkill": ("str", False),
     "timeout_s": ("int", False),
+    "project": ("str", False),
 }
 _TOP_KEYS = {"broker", "limits", "queues", "lsf"}
 

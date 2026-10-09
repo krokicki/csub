@@ -196,6 +196,7 @@ gpu_price_usd_per_hour = 0.5
 
 [lsf]
 profile = "/etc/profile.d/lsf.sh"         # sourced before bsub/bjobs/bkill
+project = "mylab"                         # bsub -P: the lab or project jobs are billed to
 ```
 
 Slots are computed as `max(cpus, ceil(mem_mb / mem_per_slot_mb))`. Every job gets a walltime;
