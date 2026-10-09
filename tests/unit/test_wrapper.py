@@ -327,15 +327,51 @@ def test_execute_with_injected_client(make_spec, policy, ctx, exec_env, project_
     assert out.startswith("csub 0.1.0\n") and out.strip().endswith(client_src + "/__init__.py")
 
 
+# --- bwrap backend ---------------------------------------------------------------------------
+
+
+def test_bwrap_line(make_spec, make_policy, ctx):
+    p = make_policy(broker={"sandbox": "bwrap"})
+    job = resolve(make_spec(), p, ctx)
+    assert job.sandbox == "bwrap"
+    text = render_wrapper(job, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h")
+    assert f"{SCRIPTS}/sandbox-run.sh" in text and "podman-run.sh" not in text
+    assert "--image" not in text and "--keep-id" not in text and "--gpu" not in text
+    assert f"\ncd {shlex.quote(job.cwd)} || exit {EXIT_CD}\n" in text
+    assert text.index("cd " + shlex.quote(job.cwd)) < text.index("sandbox-run.sh")
+    gpu = resolve(make_spec(gpus=1, queue="gpu_short"), p, ctx)
+    assert gpu.sandbox == "podman"
+    assert "podman-run.sh" in render_wrapper(
+        gpu, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h"
+    )
+
+
+def test_execute_bwrap_job(make_spec, make_policy, ctx, exec_env, project_dir, fake_sandbox):
+    p = make_policy(broker={"sandbox": "bwrap"})
+    job = resolve(make_spec(command=["sh", "-c", "pwd; exit 3"]), p, ctx)
+    r, job_dir, _ = exec_env(job)
+    assert r.returncode == 3, r.stderr
+    out = (project_dir / ".csub" / "jobs" / "42" / "stdout").read_text()
+    assert out.strip() == str(project_dir)
+    rec = fake_sandbox.for_job("42")
+    assert rec["script"] == "sandbox-run.sh" and rec["cwd"] == str(project_dir)
+    assert not (job_dir / "sandbox-run.json").exists(), "state dir must not be the bwrap cwd"
+
+
 def test_claude_flag(make_spec, make_policy, ctx):
     from csub.broker.resolve import CLAUDE_HOSTS
 
-    p = make_policy(broker={"allow_claude": True, "allowed_hosts": list(CLAUDE_HOSTS)})
-    job = resolve(make_spec(claude=True), p, ctx)
-    text = render_wrapper(job, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h")
-    assert "\n    --claude \\\n" in text and "--allow api.anthropic.com" in text
-    assert "export PATH=/h/.local/bin:/usr/local/bin:/usr/bin:/bin " in text
-    plain = resolve(make_spec(), p, ctx)
-    assert "--claude" not in render_wrapper(
-        plain, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h"
-    )
+    for sandbox in ("podman", "bwrap"):
+        p = make_policy(
+            broker={"sandbox": sandbox, "allow_claude": True, "allowed_hosts": list(CLAUDE_HOSTS)}
+        )
+        job = resolve(make_spec(claude=True), p, ctx)
+        text = render_wrapper(
+            job, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h"
+        )
+        assert "\n    --claude \\\n" in text and "--allow api.anthropic.com" in text
+        assert "export PATH=/h/.local/bin:/usr/local/bin:/usr/bin:/bin " in text
+        plain = resolve(make_spec(), p, ctx)
+        assert "--claude" not in render_wrapper(
+            plain, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/h"
+        )

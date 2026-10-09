@@ -28,6 +28,10 @@ class PolicyError(CsubError):
         super().__init__("broker_misconfigured", message, details)
 
 
+SANDBOX_SCRIPTS = {"podman": "podman-run.sh", "bwrap": "sandbox-run.sh"}
+SANDBOXES = tuple(SANDBOX_SCRIPTS)
+
+
 @dataclass(frozen=True)
 class QueuePolicy:
     name: str
@@ -86,6 +90,7 @@ class Policy:
     scratch_root: str = "/scratch"
     keep_id: bool = True
     inject_client: bool = True
+    sandbox: str = "podman"  # for CPU queues; GPU queues always use podman (bwrap has no GPU)
     allow_claude: bool = False  # jobs may run Claude Code with the submitter's credentials
     env_allow: tuple[str, ...] = ()
     lsf_extra_allow: tuple[re.Pattern[str], ...] = ()
@@ -97,6 +102,9 @@ class Policy:
 
     def queue(self, name: str) -> QueuePolicy | None:
         return self.queues.get(name)
+
+    def sandbox_for(self, queue: QueuePolicy) -> str:
+        return "podman" if queue.gpu else self.sandbox
 
     def probe_summary(self) -> dict[str, Any]:
         return {
@@ -111,6 +119,7 @@ class Policy:
             "scratch": self.scratch,
             "keep_id": self.keep_id,
             "inject_client": self.inject_client,
+            "sandbox": self.sandbox,
             "allow_claude": self.allow_claude,
             "env_allow": list(self.env_allow),
             "lsf_extra_enabled": bool(self.lsf_extra_allow),
@@ -133,6 +142,7 @@ _BROKER_KEYS: dict[str, tuple[str, bool]] = {
     "scratch_root": ("str", False),
     "keep_id": ("bool", False),
     "inject_client": ("bool", False),
+    "sandbox": ("str", False),
     "allow_claude": ("bool", False),
     "env_allow": ("list[str]", False),
     "lsf_extra_allow": ("list[str]", False),
@@ -295,6 +305,12 @@ def parse_policy(  # noqa: C901 - one validator
     denied_roots = roots("denied_roots")
     readonly_roots = roots("readonly_roots")
 
+    sandbox = b.get("sandbox", "podman")
+    if sandbox not in SANDBOXES:
+        raise PolicyError(
+            f"{where}.sandbox: expected one of {', '.join(SANDBOXES)}, got {sandbox!r}"
+        )
+
     for h in b.get("allowed_hosts", []):
         if not h or any(c.isspace() for c in h) or h != h.lower():
             raise PolicyError(f"{where}.allowed_hosts: invalid hostname pattern {h!r}")
@@ -396,9 +412,13 @@ def parse_policy(  # noqa: C901 - one validator
                 "an agent could write to it"
             )
     if check_fs:
-        script = os.path.join(scripts_dir, "podman-run.sh")
-        if not os.path.isfile(script) or not os.access(script, os.X_OK):
-            raise PolicyError(f"{where}.sandbox_scripts_dir: {script} is missing or not executable")
+        needed = {sandbox} | {"podman" for q in queues.values() if q.gpu}
+        for script in sorted(SANDBOX_SCRIPTS[s] for s in needed):
+            script = os.path.join(scripts_dir, script)
+            if not os.path.isfile(script) or not os.access(script, os.X_OK):
+                raise PolicyError(
+                    f"{where}.sandbox_scripts_dir: {script} is missing or not executable"
+                )
         if lsf_cfg.profile and not os.access(lsf_cfg.profile, os.R_OK):
             raise PolicyError(f"{source}: lsf.profile: {lsf_cfg.profile} is not readable")
 
@@ -417,6 +437,7 @@ def parse_policy(  # noqa: C901 - one validator
         scratch_root=scratch_root,
         keep_id=b.get("keep_id", True),
         inject_client=b.get("inject_client", True),
+        sandbox=sandbox,
         allow_claude=b.get("allow_claude", False),
         env_allow=tuple(b.get("env_allow", [])),
         lsf_extra_allow=tuple(compiled),

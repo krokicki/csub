@@ -116,6 +116,7 @@ class ResolvedJob:
     claude: bool
     scratch_root: str
     keep_id: bool
+    sandbox: str  # "podman" or "bwrap"
     depends_on: tuple[Dependency, ...]
     lsf_extra_argv: tuple[str, ...]
     estimated_max_cost_usd: float
@@ -481,6 +482,7 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
         claude=spec.claude,
         scratch_root=policy.scratch_root,
         keep_id=policy.keep_id,
+        sandbox=policy.sandbox_for(queue),
         depends_on=deps,
         lsf_extra_argv=(("-P", policy.lsf.project) if policy.lsf.project else ()) + extra,
         estimated_max_cost_usd=cost,

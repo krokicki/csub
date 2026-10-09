@@ -193,3 +193,17 @@ def test_lsf_extra_patterns_compile(make_policy):
     p = make_policy(broker={"lsf_extra_allow": [r"-P \w+"]})
     assert isinstance(p.lsf_extra_allow[0], re.Pattern)
     assert p.probe_summary()["lsf_extra_enabled"] is True
+
+
+def test_sandbox_setting(make_policy, policy):
+    import pytest
+
+    from csub.broker.policy import PolicyError
+
+    assert policy.sandbox == "podman"
+    p = make_policy(broker={"sandbox": "bwrap"})
+    cpu = next(q for q in p.queues.values() if not q.gpu)
+    gpu = next(q for q in p.queues.values() if q.gpu)
+    assert p.sandbox_for(cpu) == "bwrap" and p.sandbox_for(gpu) == "podman"
+    with pytest.raises(PolicyError, match="sandbox: expected one of"):
+        make_policy(broker={"sandbox": "docker"})

@@ -274,7 +274,8 @@ def format_probe(p, out: TextIO) -> None:
     out.write("allowed roots: " + ", ".join(p.allowed_roots) + "\n")
     out.write("allowed hosts: " + (", ".join(p.allowed_hosts) or "(none)") + "\n")
     out.write(
-        f"scratch: {'yes' if p.scratch else 'no'}; env: {', '.join(p.env_allow) or '(none)'}\n"
+        f"sandbox: {p.sandbox}; scratch: {'yes' if p.scratch else 'no'}; "
+        f"env: {', '.join(p.env_allow) or '(none)'}\n"
     )
 
 

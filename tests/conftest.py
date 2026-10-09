@@ -62,9 +62,10 @@ def scripts_dir(tmp_home: Path) -> Path:
     """A stand-in agentic-sandbox scripts dir under $HOME (the normal placement)."""
     d = tmp_home / ".local" / "share" / "csub" / "agentic-sandbox" / "scripts"
     d.mkdir(parents=True)
-    script = d / "podman-run.sh"
-    script.write_text("#!/bin/sh\nexit 0\n")
-    os.chmod(script, 0o755)
+    for name in ("podman-run.sh", "sandbox-run.sh"):
+        script = d / name
+        script.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(script, 0o755)
     return d
 
 

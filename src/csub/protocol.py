@@ -619,6 +619,7 @@ class ProbeResult:
     allowed_hosts: list[str] = field(default_factory=list)
     scratch: bool = False
     keep_id: bool = True
+    sandbox: str = "podman"
     allow_claude: bool = False
     env_allow: list[str] = field(default_factory=list)
     lsf_extra_enabled: bool = False

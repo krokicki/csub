@@ -6,6 +6,9 @@
 # facts"); they are also what the test-suite validates against.
 
 [broker]
+# CPU jobs run under bwrap (sandbox-run.sh): no image pull, no subuid range needed.
+# GPU queues always use podman, the only backend that can pass GPUs through.
+sandbox = "bwrap"
 state_dir = "~/.csub"
 sandbox_scripts_dir = "~/.local/share/csub/agentic-sandbox/scripts"
 default_image = "ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-lite:latest"
