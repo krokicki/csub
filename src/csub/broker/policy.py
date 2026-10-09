@@ -66,6 +66,7 @@ class LsfConfig:
     bjobs: str = "bjobs"
     bkill: str = "bkill"
     timeout_s: int = 120
+    norc: bool = False  # run LSF commands via `bash --noprofile --norc`, skipping ~/.bashrc
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ _LSF_KEYS: dict[str, tuple[str, bool]] = {
     "bjobs": ("str", False),
     "bkill": ("str", False),
     "timeout_s": ("int", False),
+    "norc": ("bool", False),
 }
 _TOP_KEYS = {"broker", "limits", "queues", "lsf"}
 

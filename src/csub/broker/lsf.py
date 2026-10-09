@@ -87,7 +87,10 @@ class LsfRunner:
     def argv(self, tool: str, args: list[str]) -> list[str]:
         if self.cfg.profile:
             script = f'. {shlex.quote(self.cfg.profile)} >/dev/null 2>&1 || exit 97; exec "$0" "$@"'
-            return ["bash", "-c", script, tool, *args]
+            # Under sshd, bash sources ~/.bashrc even for `bash -c`; with lsf.norc the policy
+            # can skip that (seconds per LSF call when .bashrc runs a conda hook or similar).
+            bash = ["bash", "--noprofile", "--norc"] if self.cfg.norc else ["bash"]
+            return [*bash, "-c", script, tool, *args]
         return [tool, *args]
 
     def _check_not_self(self, tool: str) -> None:
