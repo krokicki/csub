@@ -372,6 +372,11 @@ def check_lsf_extra(extra: tuple[str, ...], policy: Policy) -> tuple[str, ...]:
             raise _invalid(f"bsub flag {parts[0]} is not supported")
         if parts[0] in OWNED_BSUB_FLAGS:
             raise _policy(f"bsub flag {parts[0]} is set by the broker and cannot be overridden")
+        if policy.lsf.project and parts[0].startswith("-P"):
+            # LSF takes the last -P; with lsf.project set, the policy's must be the only one.
+            raise _policy(
+                "bsub flag -P is set by the policy (lsf.project) and cannot be overridden"
+            )
         if not parts[0].startswith("-"):
             raise _invalid(f"lsf_extra entry {item!r} must start with a flag")
         argv += parts
@@ -469,6 +474,6 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
         scratch_root=policy.scratch_root,
         keep_id=policy.keep_id,
         depends_on=deps,
-        lsf_extra_argv=extra,
+        lsf_extra_argv=(("-P", policy.lsf.project) if policy.lsf.project else ()) + extra,
         estimated_max_cost_usd=cost,
     )
