@@ -112,3 +112,74 @@ def test_ssh_argv(tmp_path):
     assert argv[-3:] == ["u", "h", "csub-broker"] and argv[argv.index("-l") + 1] == "u"
     t = SshTransport("h")
     assert "-l" not in t.argv and "-i" not in t.argv
+
+
+def _connect_proxy(allowed: str):
+    """A one-shot HTTP CONNECT proxy; the tunnel's far end is an echo server. Returns its port."""
+    import socketserver
+
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):
+            target = self.rfile.readline().split()[1].decode()
+            while self.rfile.readline() not in (b"\r\n", b""):
+                pass
+            if target != allowed:
+                self.wfile.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                return
+            self.wfile.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            while True:
+                data = self.request.recv(65536)
+                if not data:
+                    return
+                self.request.sendall(data.upper())
+
+    srv = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv.server_address[1]
+
+
+def _upper_server():
+    """A plain TCP server that upper-cases whatever it receives. Returns its port."""
+    import socketserver
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            while True:
+                data = self.request.recv(65536)
+                if not data:
+                    return
+                self.request.sendall(data.upper())
+
+    srv = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv.server_address[1]
+
+
+def test_httpconnect_tunnels_through_proxy():
+    import subprocess
+    import sys
+
+    port = _connect_proxy("broker.example:22")
+    env = {**os.environ, "http_proxy": f"http://127.0.0.1:{port}", "PYTHONNOUSERSITE": "1"}
+    cp = subprocess.run(
+        [sys.executable, "-m", "csub.transport.httpconnect", "broker.example", "22"],
+        input=b"ssh banner\n", capture_output=True, env=env, timeout=10,
+    )  # fmt: skip
+    assert cp.returncode == 0, cp.stderr
+    assert cp.stdout == b"SSH BANNER\n"
+
+    cp = subprocess.run(
+        [sys.executable, "-m", "csub.transport.httpconnect", "other.example", "22"],
+        input=b"", capture_output=True, env=env, timeout=10,
+    )  # fmt: skip
+    assert cp.returncode == 1
+    assert b"refused CONNECT other.example:22" in cp.stderr
+
+    # No proxy configured: connect directly.
+    env.pop("http_proxy")
+    cp = subprocess.run(
+        [sys.executable, "-m", "csub.transport.httpconnect", "127.0.0.1", str(_upper_server())],
+        input=b"direct\n", capture_output=True, env=env, timeout=10,
+    )  # fmt: skip
+    assert cp.returncode == 0, cp.stderr
+    assert cp.stdout == b"DIRECT\n"

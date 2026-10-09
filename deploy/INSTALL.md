@@ -88,37 +88,70 @@ The answer contains `"ok":true`. Otherwise it names the policy line that is wron
 
 ## 4. Create the agent's key
 
-On the machine that builds or starts the agent container:
+On the machine that builds or starts the agent container. This key can only run the broker, so
+it is not kept in `~/.ssh`, which the sandbox masks:
 
 ```sh
-ssh-keygen -t ed25519 -N "" -f csub_ed25519 -C csub-agent
+mkdir -p ~/.config/csub && chmod 700 ~/.config/csub
+ssh-keygen -t ed25519 -N "" -f ~/.config/csub/agent_key -C csub-agent
 ```
 
 On the submit host, allow this key to run the broker and nothing else:
 
 ```sh
-echo "restrict,command=\"$HOME/.local/bin/csub-broker\" $(cat csub_ed25519.pub)" >> ~/.ssh/authorized_keys
+echo "restrict,command=\"$HOME/.local/bin/csub-broker\" $(cat agent_key.pub)" >> ~/.ssh/authorized_keys
 ```
 
-(Copy `csub_ed25519.pub` to the submit host first.)
+(Copy `agent_key.pub` to the submit host first.)
 
 ## 5. Set up the agent container
 
+The agent container is the sandbox the agent (Claude Code, opencode) runs in, started with
+`sandbox-run.sh` (bwrap, on a workstation or login node) or `podman-run.sh` (on a compute node)
+from agentic-sandbox. If the agent runs on a plain machine without a sandbox, do this step there
+instead.
+
+The sandbox binds only the system toolchain and the current directory, starts from an empty
+environment, and always masks `~/.ssh`. So the durable client settings go in a file next to the
+agent key, and the directory is bound into every launch:
+
 ```sh
-pip install '/path/to/csub[mcp]'        # needs Python 3.10 or newer
-cp csub_ed25519 ~/.ssh/csub_ed25519
-export CSUB_SSH_HOST=submit.example.org
-export CSUB_MOUNTS=/data/lab/project:rw  # exactly the paths mounted into this container
-csub probe
+cat > ~/.config/csub/client.toml <<'EOF'
+ssh_host = "submit.example.org"
+ssh_key  = "~/.config/csub/agent_key"
+# The sandbox only has an HTTP CONNECT proxy ($http_proxy); send ssh through it.
+# -F/dev/null: skip /etc/ssh, whose root-owned files ssh rejects inside the sandbox's user namespace.
+# The sandbox masks ~/.ssh, so the host key lives here too (ssh-keyscan below).
+ssh_opts = [
+  "-F/dev/null",
+  "UserKnownHostsFile=~/.config/csub/known_hosts",
+  "ProxyCommand=python3 -m csub.transport.httpconnect %h %p",
+]
+EOF
+ssh-keyscan submit.example.org > ~/.config/csub/known_hosts
 ```
 
-Add the MCP server to the agent's configuration:
+Only the mounts change per launch, because they must be exactly the paths this container has:
+
+```sh
+SANDBOX=~/.local/share/csub/agentic-sandbox/scripts
+cd /data/lab/project
+export CSUB_MOUNTS="$PWD:rw"
+"$SANDBOX"/sandbox-run.sh --ro ~/.local --ro ~/.config/csub --env CSUB_MOUNTS \
+    --allow submit.example.org -- csub probe
+```
+
+- `--ro ~/.local` makes a host `pip install --user '/path/to/csub[mcp]'` (Python 3.10 or newer)
+  visible inside. Alternatively bake csub into the image.
+- `--ro ~/.config/csub` brings in the key and `client.toml`.
+- `--allow submit.example.org` is the only network the container needs.
+
+Once `csub probe` answers, start the agent with the same flags and `claude` (or `opencode`) as
+the command, with the MCP server in its configuration:
 
 ```json
 {"mcpServers": {"csub": {"command": "csub-mcp"}}}
 ```
-
-The container needs network access to the submit host on port 22 and nothing else for csub.
 
 ## 6. Submit as yourself on the submit host
 
