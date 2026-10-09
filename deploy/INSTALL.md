@@ -30,6 +30,12 @@ git clone https://github.com/JaneliaScientificComputingSystems/agentic-sandbox \
 
 This installs `~/.local/bin/csub` and `~/.local/bin/csub-broker`.
 
+Every request over ssh starts your login shell on the submit host, and bash reads `~/.bashrc`
+even for a non-interactive command. Anything slow in there (a `conda` hook, `nvm`) is paid on
+every `csub` call. Keep such lines behind an interactive guard, e.g. `[[ $- == *i* ]] || return`.
+Setting `norc = true` in the policy's `[lsf]` table skips `~/.bashrc` for the broker's own
+`bsub`/`bjobs`/`bkill` calls, but not for the login shell sshd starts.
+
 ## 3. Write the policy
 
 ```sh

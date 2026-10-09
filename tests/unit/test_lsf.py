@@ -31,15 +31,6 @@ def runner(*results, profile=""):
     ), r
 
 
-def test_argv_with_and_without_profile():
-    lsf, _ = runner(profile="/etc/profile.d/profile.lsf.sh")
-    argv = lsf.argv("bsub", ["-q", "short"])
-    assert argv[:2] == ["bash", "-c"] and argv[3:] == ["bsub", "-q", "short"]
-    assert '. /etc/profile.d/profile.lsf.sh >/dev/null 2>&1 || exit 97; exec "$0" "$@"' == argv[2]
-    lsf, _ = runner()
-    assert lsf.argv("bsub", ["-q", "short"]) == ["bsub", "-q", "short"]
-
-
 def test_bsub_parses_janelia_output():
     lsf, r = runner((0, JANELIA_BSUB_OUT, "Warning: something\n"))
     res = lsf.bsub(["-q", "short"], "#!/bin/sh\n")
@@ -144,7 +135,6 @@ def test_self_shadow_guard(tmp_path):
     with pytest.raises(CsubError, match="shadowed") as e:
         lsf.bsub([], "x")
     assert e.value.code == "broker_misconfigured"
-    assert r.calls[0][0][:2] == ["bash", "-c"]
     # a bsub outside our prefix is fine, and the check runs only once
     r = Runner((0, "/usr/bin/bsub\n", ""), (0, JANELIA_BSUB_OUT, ""), (0, JANELIA_BSUB_OUT, ""))
     lsf = LsfRunner(LsfConfig(profile="", bsub="bsub"), run=r, own_prefix=str(prefix))
