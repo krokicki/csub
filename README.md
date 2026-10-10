@@ -129,7 +129,7 @@ Policy rejections come back as tool errors, so the agent can fix its request.
 | `gpu_mem_gb`   | minimum GPU memory, on queues that mix GPU models                  |
 | `walltime_min` | hard runtime limit in minutes                                      |
 | `queue`        | optional for CPU jobs, required for GPU jobs                       |
-| `image`        | container image; must be allowed by the policy                     |
+| `image`        | container image; must be allowed by the policy; ignored under bwrap |
 | `env`          | environment variables; names must be allowed by the policy         |
 | `allow_hosts`  | hosts the job may reach over HTTP(S); default none                 |
 | `scratch`      | private node-local scratch directory as `TMPDIR`                   |
@@ -168,6 +168,7 @@ default_image  = "ghcr.io/example/agent:latest"
 allowed_images = ["ghcr.io/example/*:*"]
 allowed_roots  = ["/data/lab"]            # mounts must be below these; $HOME is always refused
 allow_claude   = false                    # true: jobs may run Claude Code with the submitter's login
+sandbox        = "podman"                 # or "bwrap" (no image, no rootless podman, no GPU jobs)
 readonly_roots = ["/data/lab/raw"]        # forced read-only
 allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]
 env_allow      = ["OMP_NUM_THREADS"]

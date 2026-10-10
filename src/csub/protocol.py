@@ -546,6 +546,7 @@ class SubmitResult:
     gpus: int = 0
     gpu_mem_gb: int | None = None
     image: str = ""
+    sandbox: str = ""  # "podman" or "bwrap"; the latter runs on the node's toolchain, no image
     mounts: list[dict[str, str]] = field(default_factory=list)
     allow_hosts: list[str] = field(default_factory=list)
     scratch: bool = False
@@ -620,6 +621,7 @@ class ProbeResult:
     scratch: bool = False
     keep_id: bool = True
     allow_claude: bool = False
+    sandbox: str = "podman"
     env_allow: list[str] = field(default_factory=list)
     lsf_extra_enabled: bool = False
 
@@ -720,7 +722,8 @@ JOBSPEC_SCHEMA: dict[str, Any] = {
         "image": {
             "description": (
                 "Container image; defaults to the image this container runs in. "
-                "Must be allowed by policy."
+                "Must be allowed by policy. Queues that run under bwrap (see csub_probe) "
+                "take no image; the response's `sandbox` says which backend ran."
             ),
             "type": "string",
         },

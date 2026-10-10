@@ -274,7 +274,8 @@ def format_probe(p, out: TextIO) -> None:
     out.write("allowed roots: " + ", ".join(p.allowed_roots) + "\n")
     out.write("allowed hosts: " + (", ".join(p.allowed_hosts) or "(none)") + "\n")
     out.write(
-        f"scratch: {'yes' if p.scratch else 'no'}; env: {', '.join(p.env_allow) or '(none)'}\n"
+        f"sandbox: {p.sandbox}; scratch: {'yes' if p.scratch else 'no'}; "
+        f"env: {', '.join(p.env_allow) or '(none)'}\n"
     )
 
 
@@ -286,8 +287,9 @@ def cmd_submit(ns, client: Client, out: TextIO, stdin: TextIO) -> int:
             out.write(json.dumps(r.to_dict(), indent=1) + "\n")
     else:
         billed = f" billed to {r.billing_group}" if r.billing_group else ""
+        via = f" via {r.sandbox}" if r.sandbox else ""
         out.write(
-            f"Job {r.job_id} submitted to {r.queue} "
+            f"Job {r.job_id} submitted to {r.queue}{via} "
             f"({_plural(r.slots, 'slot')}, {r.walltime_min} min, "
             f"est. max ${r.estimated_max_cost_usd:.2f}){billed}\n"
         )

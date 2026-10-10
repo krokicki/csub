@@ -6,6 +6,9 @@
 # facts"); they are also what the test-suite validates against.
 
 [broker]
+# "podman" (podman-run.sh) or "bwrap" (sandbox-run.sh: no image pull, no subuid range,
+# but no GPUs; GPU jobs are refused under bwrap).
+sandbox = "podman"
 state_dir = "~/.csub"
 sandbox_scripts_dir = "~/.local/share/csub/agentic-sandbox/scripts"
 default_image = "ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-lite:latest"

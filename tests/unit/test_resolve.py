@@ -233,6 +233,19 @@ def test_cwd_rules(make_spec, policy, ctx, project_dir, roots):
 # --- image, env, hosts, scratch -------------------------------------------------------
 
 
+def test_bwrap_takes_no_image(make_spec, make_policy, ctx):
+    p = make_policy(broker={"sandbox": "bwrap"})
+    job = resolve(make_spec(), p, ctx)
+    assert job.sandbox == "bwrap" and job.image == ""
+    assert job.to_response()["sandbox"] == "bwrap" and job.to_response()["image"] == ""
+    # The default image is a no-op (a client.toml `image` must not break CPU jobs)...
+    assert resolve(make_spec(image="ghcr.io/test/agent:latest"), p, ctx).image == ""
+    # ...but asking for anything else would silently run on the host toolchain: refuse.
+    reject("policy_violation", "bwrap", make_spec(image="ghcr.io/test/agent:v2"), p, ctx)
+    # bwrap cannot pass GPUs through: a GPU job is refused rather than quietly run elsewhere.
+    reject("policy_violation", "GPU jobs need podman", make_spec(gpus=1, queue="gpu_short"), p, ctx)
+
+
 def test_image(make_spec, policy, ctx):
     assert resolve(make_spec(), policy, ctx).image == "ghcr.io/test/agent:latest"
     assert (
