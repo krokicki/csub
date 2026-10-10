@@ -7,8 +7,8 @@ Both paths below start with steps 1–3 (build, install the broker, and write it
 - **[Path A: Submit the agent as a csub job](#path-a-submit-the-agent-as-a-csub-job).** Start
   from a trusted shell on the submit host. csub provides the job's sandbox and broker connection.
 - **[Path B: Start a standalone agent sandbox](#path-b-start-a-standalone-agent-sandbox-optional).**
-  Use this optional setup when the agent runs in a sandbox you launch yourself: beside a
-  host-side broker where `bsub` works, or over SSH from a machine without LSF.
+  Use this optional setup when the agent runs in a sandbox you launch yourself, beside a
+  host-side broker. On a machine without LSF the broker runs its LSF commands over SSH.
 
 ## Prerequisites
 
@@ -128,13 +128,12 @@ Use this path if you launch the agent yourself with agentic-sandbox's `sandbox-r
 `podman-run.sh`, rather than submitting it as a csub job. These launchers do not start a csub
 broker for you. How the client reaches one depends on where the sandbox runs:
 
-- **On a machine where `bsub` works** (the submit host, or a compute node under `bsub -Is`):
-  start a broker outside the sandbox and bind its socket in. This is the same mechanism jobs
-  use. No network allowance for csub and no reusable csub SSH credential inside the sandbox.
+- Start a broker outside the sandbox and bind its socket in. This is the same mechanism jobs
+  use. No network allowance for csub and no SSH client, key or credential inside the sandbox.
   See [Sandbox beside a host-side broker](#sandbox-beside-a-host-side-broker).
-- **On a machine without LSF** (a workstation or laptop): the client reaches the broker on the
-  submit host over SSH through the launcher's HTTP proxy. See
-  [Agent on a machine without LSF](#agent-on-a-machine-without-lsf).
+- **On a machine without LSF** (a workstation that mounts the cluster filesystem), the same
+  broker sends its `bsub`, `bjobs` and `bkill` calls over SSH to the submit host. One policy
+  key enables that; see [Machine without LSF](#machine-without-lsf).
 
 Both need the csub client inside the sandbox, so start with the install step. The launch
 commands distinguish bwrap and Podman: their environment flags, Python runtimes, and
@@ -156,7 +155,7 @@ Choose one of these routes for a new venv. The following setup and launch exampl
 `PYTHON_BINDS` carries any extra runtime mount into each launch.
 
 **CLI-only client with the system Python (bwrap or a plain machine).** On RHEL 9 and similar
-distributions, `/usr/bin/python3` is Python 3.9. That supports csub and the proxy helper, but
+distributions, `/usr/bin/python3` is Python 3.9. That supports csub, but
 not the MCP extra. Install without `[mcp]`:
 
 ```bash
@@ -279,86 +278,36 @@ MCP clients take the same server as JSON, with the path spelled out:
 With the CLI-only client, skip MCP registration and have the agent call the venv's `csub`
 executable instead.
 
-#### Agent on a machine without LSF
+#### Machine without LSF
 
-Without `bsub` the client reaches the broker on the submit host over SSH, with a key that can
-only run the broker. Both launchers block direct network access and offer an HTTP allowlist
-proxy when hosts are allowed; SSH does not use that proxy by itself, so allowing the submit
-host alone is not enough. `csub.transport.httpconnect`, a stdlib `ProxyCommand`, closes that
-gap. Prefer the host-side broker whenever `bsub` is available: this path places a credential
-inside the sandbox and lets the agent reach every port on the submit host through the proxy.
+Where `bsub` is missing, the broker still runs on the machine that starts the agent and sends
+its `bsub`, `bjobs` and `bkill` calls over SSH to the submit host. Add `ssh_host` to the
+policy's `[lsf]` table:
 
-For a client on a plain machine without a sandbox, use the same key, client config, and venv,
-but skip the bind flags and launcher commands and run the venv's `csub` directly. The proxy
-command connects directly when neither `http_proxy` nor `https_proxy` is set.
-
-**Create the agent's key** on the machine that starts the agent. This key can only run the
-broker, so it is not kept in `~/.ssh`, which the bwrap sandbox masks and the podman launcher
-does not bind:
-
-```sh
-mkdir -p ~/.config/csub && chmod 700 ~/.config/csub
-ssh-keygen -t ed25519 -N "" -f ~/.config/csub/agent_key -C csub-agent
-```
-
-On the submit host, allow this key to run the broker and nothing else:
-
-```sh
-echo "restrict,command=\"$HOME/.local/bin/csub-broker\" $(cat ~/.config/csub/agent_key.pub)" >> ~/.ssh/authorized_keys
-```
-
-If the agent machine and submit host share your home directory, the public key is already at
-that path. Otherwise copy only `agent_key.pub` to `~/.config/csub/agent_key.pub` on the submit
-host first; the private key stays on the agent machine.
-
-**Configure the client.** The bwrap sandbox starts from an empty environment with selected
-variables passed through and always masks `~/.ssh`. So the durable client settings go in a
-file next to the agent key, and the directory is bound into every launch:
-
-```sh
-cat > ~/.config/csub/client.toml <<'EOF'
+```toml
+[lsf]
+profile  = "/etc/profile.d/lsf.sh"   # sourced on the submit host
 ssh_host = "submit.example.org"
-ssh_key  = "~/.config/csub/agent_key"
-# The sandbox only has an HTTP CONNECT proxy ($http_proxy); send ssh through it.
-# -F/dev/null: skip /etc/ssh, whose root-owned files ssh rejects inside the sandbox's user namespace.
-# bwrap masks ~/.ssh, so the host key lives here too (ssh-keyscan below).
-# ProxyCommand runs under sh with ssh's PATH, not the venv's, so name the venv's interpreter.
-ssh_opts = [
-  "-F/dev/null",
-  "UserKnownHostsFile=~/.config/csub/known_hosts",
-  "ProxyCommand=~/.local/share/csub/venv/bin/python3 -m csub.transport.httpconnect %h %p",
-]
-EOF
-ssh-keyscan -T 5 submit.example.org > ~/.config/csub/known_hosts
 ```
 
-Run `ssh-keyscan` outside the sandbox, from a machine with a direct route to the submit host;
-it does not use the HTTP proxy. If you only have proxy access, obtain the host keys from a
-trusted machine or administrator instead. Verify the fingerprints through a trusted source
-before using the resulting `known_hosts` file.
+The key only takes effect where the profile does not exist and `bsub` is not on `PATH`. The
+submit host and the per-job brokers on compute nodes ignore it, so a policy file in a shared
+home serves all three. Nothing csub-specific is needed on the SSH side: no forced command and
+no second key. Requirements:
 
-On shared-home clusters, `--ro ~/.config/csub` also exposes `broker.toml` from step 3 to the
-standalone agent. This is expected and read-only: the agent may read the policy but cannot
-change it through this mount. csub-managed jobs still keep the policy outside their mounts.
+- `ssh submit.example.org true` succeeds without a prompt for the account that starts the
+  broker, through `~/.ssh/config`, an agent, or a key already in place. The broker runs outside
+  the sandbox, so `~/.ssh` stays unmounted and the agent never sees a credential. One
+  multiplexed connection is reused for every call.
+- The machine sees the cluster filesystem at the cluster's paths: the home directory (policy,
+  broker state, the installed csub package the wrapper mounts into jobs, and the agentic-sandbox
+  checkout) and every project path in `CSUB_MOUNTS`. Each job restarts the broker on a compute
+  node from the same install path, so install csub into the shared home as in step 2, not into
+  a machine-local prefix. A laptop without these mounts cannot run the broker.
 
-**Launch.** Take the host-side broker commands above and swap the socket for the SSH setup:
-drop `--ro "$D/sock"`, `CSUB_TRANSPORT` and `CSUB_SOCKET`, and add `--ro ~/.config/csub` and
-`--allow submit.example.org`. Under Podman the image must then also contain `ssh`. With bwrap:
-
-```bash
-cd /data/lab/project
-export CSUB_MOUNTS="$PWD:rw"
-"$CSUB"/agentic-sandbox/scripts/sandbox-run.sh --ro "$CSUB" --ro ~/.config/csub \
-    "${PYTHON_BINDS[@]}" --env CSUB_MOUNTS --allow submit.example.org -- \
-    "$CSUB"/venv/bin/csub probe
-```
-
-On a plain machine, skip the launcher and its bind flags:
-
-```sh
-cd /data/lab/project
-CSUB_MOUNTS="$PWD:rw" "$CSUB"/venv/bin/csub probe
-```
+Then start `csub-broker --serve` and launch the sandbox exactly as in
+[Sandbox beside a host-side broker](#sandbox-beside-a-host-side-broker). Nothing changes inside
+the sandbox. Without a sandbox, `CSUB_TRANSPORT=local` on the same machine uses the same broker.
 
 ## 5. Smoke test
 

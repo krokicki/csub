@@ -32,7 +32,9 @@ csub CLI / MCP / Python ──ssh──▶ csub-broker ──bsub──▶ LSF �
 - **Transports.** `ssh` from the agent container (a key whose only allowed command is the
   broker), `local` for a person on the submit host, and `unix` from inside a job (a per-job
   broker started by the wrapper; its socket is mounted into the job's container) or from a
-  sandbox started beside a host-side `csub-broker --serve`.
+  sandbox started beside a host-side `csub-broker --serve`. A host-side broker on a machine
+  without LSF reaches the submit host itself (`ssh_host` in the policy), so the sandbox needs
+  no ssh at all.
 - **Sandbox.** Jobs run in `podman-run.sh` from
   [agentic-sandbox](https://github.com/JaneliaScientificComputingSystems/agentic-sandbox),
   which handles rootless podman under LSF, GPUs, network isolation and cleanup.
@@ -201,6 +203,7 @@ gpu_price_usd_per_hour = 0.5
 profile = "/etc/profile.d/lsf.sh"         # sourced before bsub/bjobs/bkill
 norc = false                              # true: run LSF commands with bash --norc (skip ~/.bashrc)
 project = "mylab"                         # bsub -P: the lab or project jobs are billed to
+ssh_host = ""                             # run LSF commands over ssh here when this machine has no LSF
 ```
 
 Slots are computed as `max(cpus, ceil(mem_mb / mem_per_slot_mb))`. Every job gets a walltime;

@@ -71,6 +71,31 @@ def test_bsub_timeout_and_missing():
         lsf.bsub([], "x")
 
 
+def test_ssh_host_runs_lsf_commands_remotely_when_lsf_is_absent():
+    """No LSF profile on this machine: every command is `ssh host <quoted local argv>`, with the
+    profile sourced on the far side and the bsub script still on stdin."""
+    r = Runner((0, JANELIA_BSUB_OUT, ""))
+    cfg = LsfConfig(profile="/no/such/profile.lsf", bsub="/x/bsub", ssh_host="submit")
+    res = LsfRunner(cfg, run=r).bsub(["-q", "short"], "#!/bin/sh\n")
+    assert res.job_id == "1234"
+    argv, kw = r.calls[0]
+    assert argv[0] == "ssh" and argv[-2] == "submit" and "BatchMode=yes" in argv
+    assert argv[-1].startswith("bash -c ") and "/no/such/profile.lsf" in argv[-1]
+    assert argv[-1].endswith(" /x/bsub -q short")
+    assert kw["input"] == "#!/bin/sh\n"
+
+
+def test_ssh_host_ignored_where_lsf_is_local(tmp_path):
+    """A per-job broker on a compute node reads the same policy; it must call bsub directly."""
+    prof = tmp_path / "profile.lsf"
+    prof.write_text("")
+    r = Runner((0, JANELIA_BSUB_OUT, ""))
+    cfg = LsfConfig(profile=str(prof), bsub="/x/bsub", ssh_host="submit")
+    LsfRunner(cfg, run=r).bsub([], "x")
+    argv, _ = r.calls[0]
+    assert argv[0] == "bash" and "ssh" not in argv and "submit" not in argv
+
+
 def test_bjobs_rows():
     out = (
         "1|RUN|-|short|4*h01:4*h02|csub-a\n2|EXIT|3|gpu_l4|h03|csub-b\n"
