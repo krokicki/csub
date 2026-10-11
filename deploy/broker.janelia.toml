@@ -23,12 +23,7 @@ allowed_hosts = [
   "files.pythonhosted.org",
   "github.com",
   "api.anthropic.com",
-  "claude.ai",
-  "platform.claude.com",
 ]
-# true lets a job run Claude Code with your login (agents starting agents); the three Anthropic
-# hosts above are what it needs.
-allow_claude = false
 scratch = true
 scratch_root = "/scratch"
 keep_id = true
@@ -36,6 +31,12 @@ inject_client = true
 env_allow = ["OMP_NUM_THREADS", "ANTHROPIC_*"]
 lsf_extra_allow = []
 forbidden_name_tokens = ["spark", "janelia", "master", "int"]
+
+# Agents starting agents: with this table a job may ask for `agent = "claude"`, and the launcher
+# binds the Claude Code CLI, a throwaway copy of your settings and your credentials file into
+# it. The hosts are what the CLI needs. Uncomment to enable.
+# [agents]
+# claude = ["api.anthropic.com", "claude.ai", "platform.claude.com"]
 
 [limits]
 max_slots = 128

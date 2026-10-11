@@ -219,7 +219,7 @@ class JobSpec:
     env: dict[str, str] = field(default_factory=dict)
     allow_hosts: tuple[str, ...] = ()
     scratch: bool = False
-    claude: bool = False
+    agent: str | None = None  # a launcher agent mode ("claude", "opencode"); policy-gated
     depends_on: tuple[Dependency, ...] = ()
     mounts: tuple[Mount, ...] = ()
     session: str | None = None
@@ -320,7 +320,9 @@ class JobSpec:
                     hosts.append(h)
 
         scratch = _bool(d.get("scratch", False), f"{where}.scratch")
-        claude = _bool(d.get("claude", False), f"{where}.claude")
+        agent = None
+        if d.get("agent") is not None:
+            agent = _str(d["agent"], f"{where}.agent", min_len=1, max_len=32)
 
         depends: list[Dependency] = []
         if "depends_on" in d:
@@ -367,7 +369,7 @@ class JobSpec:
             env=env,
             allow_hosts=tuple(hosts),
             scratch=scratch,
-            claude=claude,
+            agent=agent,
             depends_on=tuple(depends),
             mounts=tuple(mounts),
             session=session,
@@ -382,7 +384,7 @@ class JobSpec:
             "mem_mb": self.mem_mb,
             "gpus": self.gpus,
             "scratch": self.scratch,
-            "claude": self.claude,
+            "agent": self.agent,
             "env": dict(self.env),
             "allow_hosts": list(self.allow_hosts),
             "depends_on": [x.to_dict() for x in self.depends_on],
@@ -550,7 +552,7 @@ class SubmitResult:
     mounts: list[dict[str, str]] = field(default_factory=list)
     allow_hosts: list[str] = field(default_factory=list)
     scratch: bool = False
-    claude: bool = False
+    agent: str | None = None
     name: str = ""
     job_group: str = ""
     session: str = ""
@@ -620,7 +622,7 @@ class ProbeResult:
     allowed_hosts: list[str] = field(default_factory=list)
     scratch: bool = False
     keep_id: bool = True
-    allow_claude: bool = False
+    agents: list[str] = field(default_factory=list)  # agent modes jobs may request
     sandbox: str = "podman"
     env_allow: list[str] = field(default_factory=list)
     lsf_extra_enabled: bool = False
@@ -747,14 +749,14 @@ JOBSPEC_SCHEMA: dict[str, Any] = {
             "type": "boolean",
             "default": False,
         },
-        "claude": {
+        "agent": {
             "description": (
-                "Run Claude Code inside the job: the CLI, the submitter's settings and "
-                "credentials are provided, and the Anthropic API hosts are added to allow_hosts. "
-                "Needs the policy's allow_claude (see csub_probe). For agents that start agents."
+                'Run an agent harness inside the job, e.g. "claude" for Claude Code: its CLI, '
+                "a throwaway copy of the submitter's settings and the credentials are provided, "
+                "and the hosts it needs are added to allow_hosts. Must be one of the names "
+                "csub_probe lists under agents. For agents that start agents."
             ),
-            "type": "boolean",
-            "default": False,
+            "type": "string",
         },
         "depends_on": {
             "description": (

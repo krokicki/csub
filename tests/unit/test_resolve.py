@@ -427,18 +427,24 @@ def test_policy_project(make_spec, ctx, make_policy):
     assert resolve(make_spec(lsf_extra=["-P other"]), p, ctx).lsf_extra_argv == ("-P", "other")
 
 
-def test_claude_jobs(make_spec, policy, ctx, make_policy):
-    from csub.broker.resolve import CLAUDE_HOSTS
-
-    reject("policy_violation", "claude is not permitted", make_spec(claude=True), policy, ctx)
-    p = make_policy(broker={"allow_claude": True, "allowed_hosts": ["pypi.org", *CLAUDE_HOSTS]})
-    job = resolve(make_spec(claude=True, allow_hosts=["pypi.org"]), p, ctx)
-    assert (
-        job.claude and set(CLAUDE_HOSTS) <= set(job.allow_hosts) and "pypi.org" in job.allow_hosts
-    )
-    assert not resolve(make_spec(), p, ctx).claude
-    # allowed_claude without the hosts in the policy: the host check says what is missing
-    p2 = make_policy(broker={"allow_claude": True, "allowed_hosts": ["pypi.org"]})
+def test_agent_jobs(make_spec, policy, ctx, make_policy):
     reject(
-        "policy_violation", "api.anthropic.com is not permitted", make_spec(claude=True), p2, ctx
+        "policy_violation", "agent claude is not permitted", make_spec(agent="claude"), policy, ctx
+    )
+    hosts = ["api.anthropic.com", "claude.ai"]
+    p = make_policy(agents={"claude": hosts}, broker={"allowed_hosts": ["pypi.org"]})
+    job = resolve(make_spec(agent="claude", allow_hosts=["pypi.org"]), p, ctx)
+    # the agent's hosts come from its policy entry, not from allowed_hosts
+    assert job.agent == "claude" and job.allow_hosts == (
+        "api.anthropic.com",
+        "claude.ai",
+        "pypi.org",
+    )
+    assert resolve(make_spec(), p, ctx).agent is None
+    reject(
+        "policy_violation",
+        "agent opencode is not permitted by policy; allowed: claude",
+        make_spec(agent="opencode"),
+        p,
+        ctx,
     )

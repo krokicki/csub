@@ -133,7 +133,7 @@ Policy rejections come back as tool errors, so the agent can fix its request.
 | `env`          | environment variables; names must be allowed by the policy         |
 | `allow_hosts`  | hosts the job may reach over HTTP(S); default none                 |
 | `scratch`      | private node-local scratch directory as `TMPDIR`                   |
-| `claude`       | run Claude Code in the job (CLI, settings, credentials; adds the API hosts) |
+| `agent`        | run an agent harness in the job, e.g. `claude`; see `[agents]` in the policy |
 | `depends_on`   | job ids, or `{job_id, when}` with `when` = `done`, `ended`, `exit` |
 | `mounts`       | `{path, mode}`; filled in by the client from `CSUB_MOUNTS`         |
 | `session`      | job group; filled in by the client                                 |
@@ -167,11 +167,17 @@ The broker reads `~/.config/csub/broker.toml` on the submit host. Unknown keys a
 default_image  = "ghcr.io/example/agent:latest"
 allowed_images = ["ghcr.io/example/*:*"]
 allowed_roots  = ["/data/lab"]            # mounts must be below these; $HOME is always refused
-allow_claude   = false                    # true: jobs may run Claude Code with the submitter's login
 sandbox        = "podman"                 # or "bwrap" (no image, no rootless podman, no GPU jobs)
 readonly_roots = ["/data/lab/raw"]        # forced read-only
 allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]
 env_allow      = ["OMP_NUM_THREADS"]
+
+# Agents starting agents: a job may request `agent = "<mode>"`; the launcher then binds that
+# harness's CLI, a throwaway copy of the submitter's settings and the credentials file, and the
+# listed hosts are added to the job's allow_hosts. Modes: claude, opencode. Omit to refuse.
+# Only the bwrap launcher binds the CLI from $HOME; under podman the image must ship it.
+[agents]
+claude = ["api.anthropic.com", "claude.ai", "platform.claude.com"]
 
 [limits]
 max_slots = 64
