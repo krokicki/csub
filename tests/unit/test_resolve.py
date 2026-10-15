@@ -163,10 +163,13 @@ def test_mount_rejections(make_spec, policy, ctx, project_dir, roots, tmp_home, 
         policy,
         ctx,
     )
+    ro = {"mode": "ro"}
     reject(
         "invalid_request",
         "overlap",
-        make_spec(mounts=[{"path": pd}, {"path": str(roots.allowed)}]),
+        make_spec(
+            mounts=[{"path": pd}, {"path": str(roots.nrs), **ro}, {"path": str(roots.raw_ro), **ro}]
+        ),
         policy,
         ctx,
     )
@@ -179,6 +182,28 @@ def test_mount_rejections(make_spec, policy, ctx, project_dir, roots, tmp_home, 
         policy,
         ctx,
     )
+
+
+def test_ancestor_mount_cannot_bypass_denied_or_readonly_roots(make_spec, policy, ctx, roots):
+    """Mounting a parent of a denied root would expose it; a parent of a read-only root
+    mounted rw would make it writable. Only the containment direction was checked before."""
+    assert roots.denied.is_relative_to(roots.allowed) and roots.raw_ro.is_relative_to(roots.nrs)
+    reject(
+        "policy_violation",
+        "contains denied root",
+        make_spec(mounts=[{"path": str(roots.allowed), "mode": "rw"}], cwd=str(roots.allowed)),
+        policy,
+        ctx,
+    )
+    reject(
+        "policy_violation",
+        "contains read-only root",
+        make_spec(mounts=[{"path": str(roots.nrs), "mode": "rw"}], cwd=str(roots.nrs)),
+        policy,
+        ctx,
+    )
+    # read-only over a read-only root is fine (the fixture's default nrs:ro mount)
+    assert resolve(make_spec(), policy, ctx)
 
 
 def test_symlinked_mounts_are_rejected(make_spec, policy, ctx, project_dir, roots):

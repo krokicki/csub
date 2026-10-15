@@ -289,13 +289,22 @@ def check_mounts(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> tuple[Re
         for root in policy.denied_roots:
             if is_under(m.path, root):
                 raise _policy(f"mount {m.path} is under denied root {root}")
+            if is_under(root, m.path):  # an ancestor mount would expose the denied tree
+                raise _policy(f"mount {m.path} contains denied root {root}")
         if not any(is_under(m.path, root) for root in policy.allowed_roots):
             raise _policy(
                 f"mount {m.path} is outside the allowed roots: " + ", ".join(policy.allowed_roots)
             )
         mode = m.mode
-        if mode == "rw" and any(is_under(m.path, root) for root in policy.readonly_roots):
-            mode = "ro"
+        if mode == "rw":
+            for root in policy.readonly_roots:
+                if is_under(m.path, root):
+                    mode = "ro"
+                elif is_under(root, m.path):
+                    raise _policy(
+                        f"mount {m.path}:rw contains read-only root {root}; "
+                        "mount it read-only or mount a subdirectory"
+                    )
         for d in ctx.protected_dirs:
             if is_under(d, m.path):
                 raise ResolveError(
