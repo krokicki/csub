@@ -312,7 +312,7 @@ def parse_policy(  # noqa: C901 - one validator
             raise PolicyError(f"{where}.allowed_hosts: invalid hostname pattern {h!r}")
 
     for pat in b.get("env_allow", []):
-        if not _ENV_PATTERN_RE.match(pat):
+        if not _ENV_PATTERN_RE.fullmatch(pat):
             raise PolicyError(f"{where}.env_allow: invalid pattern {pat!r}")
 
     compiled: list[re.Pattern[str]] = []
@@ -326,7 +326,7 @@ def parse_policy(  # noqa: C901 - one validator
         t.lower() for t in b.get("forbidden_name_tokens", list(DEFAULT_FORBIDDEN_NAME_TOKENS))
     )
     for t in tokens:
-        if not t or not re.match(r"^[a-z0-9]+$", t):
+        if not t or not re.fullmatch(r"[a-z0-9]+", t):
             raise PolicyError(f"{where}.forbidden_name_tokens: invalid token {t!r}")
 
     max_name_len = b.get("max_name_len", 64)
@@ -354,7 +354,7 @@ def parse_policy(  # noqa: C901 - one validator
         raise PolicyError(f"{source}: [queues.<name>] tables are required")
     queues: dict[str, QueuePolicy] = {}
     for qname, _ in raw_queues.items():
-        if not _QUEUE_NAME_RE.match(qname):
+        if not _QUEUE_NAME_RE.fullmatch(qname):
             raise PolicyError(f"{source}: invalid queue name {qname!r}")
         if qname.endswith("_parallel"):
             raise PolicyError(f"{source}: queues.{qname}: parallel queues are not supported")

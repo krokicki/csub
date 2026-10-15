@@ -222,3 +222,16 @@ def test_schema_is_valid_jsonschema():
     jsonschema.validate(minimal(cpus=2), JOBSPEC_SCHEMA)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(minimal(bogus=1), JOBSPEC_SCHEMA)
+
+
+def test_anchored_fields_reject_trailing_newline():
+    """``$`` matches before a trailing newline, so ``.match`` let "abc\\n" through as a session
+    and it became ``-g /csub/<user>/abc\\n``. Every anchored field uses fullmatch now."""
+    with pytest.raises(CsubError, match="session"):
+        JobSpec.from_dict({"command": ["true"], "session": "abc\n"})
+    with pytest.raises(CsubError, match="queue"):
+        JobSpec.from_dict({"command": ["true"], "queue": "short\n"})
+    with pytest.raises(CsubError, match="env"):
+        JobSpec.from_dict({"command": ["true"], "env": {"A\n": "1"}})
+    with pytest.raises(CsubError, match="job_ids"):
+        Request.from_dict({"protocol": 1, "op": "status", "job_ids": ["12\n"]})

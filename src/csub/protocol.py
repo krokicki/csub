@@ -143,7 +143,7 @@ def _job_id(value: Any, where: str) -> str:
     s = _str(value, where, min_len=1)
     if ARRAY_JOB_ID_RE.match(s):
         raise ProtocolError(f"{where}: array jobs are not supported")
-    if not JOB_ID_RE.match(s):
+    if not JOB_ID_RE.fullmatch(s):
         raise ProtocolError(f"{where}: not a job id: {s!r}")
     return s
 
@@ -286,7 +286,7 @@ class JobSpec:
         queue = None
         if "queue" in d:
             queue = _str(d["queue"], f"{where}.queue", min_len=1)
-            if not QUEUE_RE.match(queue):
+            if not QUEUE_RE.fullmatch(queue):
                 raise ProtocolError(f"{where}.queue: invalid queue name {queue!r}")
 
         image = None
@@ -303,7 +303,7 @@ class JobSpec:
             if len(raw_env) > LIMITS["max_env"]:
                 raise ProtocolError(f"{where}.env: more than {LIMITS['max_env']} entries")
             for k, v in raw_env.items():
-                if not isinstance(k, str) or not ENV_KEY_RE.match(k):
+                if not isinstance(k, str) or not ENV_KEY_RE.fullmatch(k):
                     raise ProtocolError(f"{where}.env: invalid variable name {k!r}")
                 env[k] = _str(v, f"{where}.env.{k}", max_len=LIMITS["max_env_value_len"])
 
@@ -313,7 +313,7 @@ class JobSpec:
                 _list(d["allow_hosts"], f"{where}.allow_hosts", max_len=LIMITS["max_hosts"])
             ):
                 h = _str(h, f"{where}.allow_hosts[{i}]", min_len=1).strip().lower()
-                if not HOSTNAME_RE.match(h):
+                if not HOSTNAME_RE.fullmatch(h):
                     raise ProtocolError(f"{where}.allow_hosts[{i}]: not a hostname: {h!r}")
                 if h not in hosts:
                     hosts.append(h)
@@ -340,7 +340,7 @@ class JobSpec:
         session = None
         if "session" in d:
             session = _str(d["session"], f"{where}.session", min_len=1)
-            if not SESSION_RE.match(session):
+            if not SESSION_RE.fullmatch(session):
                 raise ProtocolError(f"{where}.session: invalid session id {session!r}")
 
         lsf_extra: list[str] = []
@@ -424,7 +424,7 @@ class Request:
         session = None
         if d.get("session") is not None:
             session = _str(d["session"], "request.session", min_len=1)
-            if not SESSION_RE.match(session):
+            if not SESSION_RE.fullmatch(session):
                 raise ProtocolError(f"request.session: invalid session id {session!r}")
         if op == "submit":
             if "job" not in d:
