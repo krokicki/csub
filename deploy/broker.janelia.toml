@@ -18,6 +18,9 @@ allowed_images = [
 allowed_roots = ["/groups/CHANGEME", "/nrs/CHANGEME"]
 denied_roots = []
 readonly_roots = []
+# Each entry allows the host and every subdomain of it, on any TCP port, as an opaque
+# CONNECT tunnel: "github.com" also allows ssh.github.com:443. Anything a listed service
+# accepts can be uploaded to it; this is a reachability list, not exfiltration prevention.
 allowed_hosts = [
   "pypi.org",
   "files.pythonhosted.org",

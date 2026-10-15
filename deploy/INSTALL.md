@@ -51,7 +51,7 @@ cat > ~/.config/csub/broker.toml <<'EOF'
 default_image  = "ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-lite:latest"
 allowed_images = ["ghcr.io/janeliascientificcomputingsystems/agentic-sandbox-*:*"]
 allowed_roots  = ["/data/lab"]
-allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]
+allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]   # each: host + subdomains, any port
 env_allow      = ["OMP_NUM_THREADS"]
 
 [limits]
@@ -137,8 +137,9 @@ CSUB_TRANSPORT=local CSUB_MOUNTS="$PWD:rw" csub submit --walltime 600 \
 ```
 
 For this, add `api.anthropic.com` to the policy's `allowed_hosts` and `ANTHROPIC_API_KEY` to
-`env_allow`. `--env` without a value passes on the key from your shell, so it never appears on
-the command line. The agent and its dependencies must be in the image or in a mount.
+`env_allow`. Use a key made for this purpose, with its own spend limit: it is readable by
+everything the job and its descendants run. `--env` without a value passes on the key from
+your shell, so it never appears on the command line. The agent and its dependencies must be in the image or in a mount.
 
 The job's wrapper starts a broker outside the container and binds its socket in, so the agent
 submits child jobs with plain `csub`, without ssh or network access to the submit host. With

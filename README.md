@@ -172,7 +172,7 @@ allowed_images = ["ghcr.io/example/*:*"]
 allowed_roots  = ["/data/lab"]            # mounts must be below these; $HOME is always refused
 sandbox        = "podman"                 # or "bwrap" (no image, no rootless podman, no GPU jobs)
 readonly_roots = ["/data/lab/raw"]        # forced read-only
-allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]
+allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]  # each: host + subdomains, any port
 env_allow      = ["OMP_NUM_THREADS"]
 
 [limits]
