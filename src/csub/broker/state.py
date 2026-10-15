@@ -6,11 +6,13 @@ outside every allowed root), so plain file operations are safe. Files are create
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import secrets
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,17 @@ class StateDir:
             d.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     # --- submission lifecycle ---
+
+    @contextmanager
+    def submit_lock(self):
+        """Serialize count-then-bsub across this user's brokers (submit host and every per-job
+        broker share the state dir), so concurrent submits cannot all pass the pending cap."""
+        fd = os.open(self.root / "submit.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # releases the lock
 
     def new_pending(self) -> tuple[str, Path]:
         token = secrets.token_hex(8)

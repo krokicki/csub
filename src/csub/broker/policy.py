@@ -55,7 +55,9 @@ class Limits:
     max_gpus: int = 8
     max_walltime_min: int = 20160
     max_estimated_cost_usd: float = 200.0
-    max_pending_per_session: int = 0
+    # Jobs the user may have PENDING at once, across all sessions, before submit is refused;
+    # 0 disables the cap. Per user, not per session: the agent picks the session name.
+    max_pending_per_user: int = 0
     default_cpu_walltime_min: int = 60
     default_gpu_walltime_min: int = 120
     cpu_short_queue: str = "short"
@@ -148,7 +150,7 @@ _LIMITS_KEYS: dict[str, tuple[str, bool]] = {
     "max_gpus": ("int", False),
     "max_walltime_min": ("int", False),
     "max_estimated_cost_usd": ("float", False),
-    "max_pending_per_session": ("int", False),
+    "max_pending_per_user": ("int", False),
     "default_cpu_walltime_min": ("int", False),
     "default_gpu_walltime_min": ("int", False),
     "cpu_short_queue": ("str", False),
@@ -342,7 +344,7 @@ def parse_policy(  # noqa: C901 - one validator
     ):
         _positive(lim, key, lwhere)
     _positive(lim, "max_estimated_cost_usd", lwhere, minimum=0)
-    _positive(lim, "max_pending_per_session", lwhere, minimum=0)
+    _positive(lim, "max_pending_per_user", lwhere, minimum=0)
     _positive(lim, "slot_price_usd_per_hour", lwhere, minimum=0)
     limits = Limits(**lim)
 

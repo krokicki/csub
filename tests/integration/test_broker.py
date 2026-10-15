@@ -239,13 +239,16 @@ def test_broken_policy_is_reported(broker, policy_path):
 def test_pending_cap(broker, submit, int_policy_dict, policy_path, fake_lsf):
     from tests.support.policyfile import write_policy
 
-    int_policy_dict["limits"]["max_pending_per_session"] = 1
+    int_policy_dict["limits"]["max_pending_per_user"] = 1
     write_policy(policy_path, int_policy_dict)
     a = submit(["sleep", "30"])["job_id"]
     broker.wait(a, states=("RUN",))
     b = submit(["true"], depends_on=[a])["job_id"]  # stays PEND behind a
     assert broker.status(b)[b]["state"] == "PEND"
     err = submit(["true"], expect_ok=False)["error"]
+    assert err["code"] == "policy_violation" and "pending" in err["message"]
+    # the cap is per user: a fresh session name does not buy another 100
+    err = submit(["true"], session="other", expect_ok=False)["error"]
     assert err["code"] == "policy_violation" and "pending" in err["message"]
     broker.ok({"protocol": 1, "op": "kill", "session": "testsess"})
 

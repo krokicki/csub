@@ -57,16 +57,6 @@ def op_probe(req: Request, ctx: BrokerContext) -> dict:
 def op_submit(req: Request, ctx: BrokerContext) -> dict:
     assert req.job is not None
     job = resolve(req.job, ctx.policy, ctx.resolve_context())
-
-    cap = ctx.policy.limits.max_pending_per_session
-    if cap:
-        pending = sum(1 for r in ctx.lsf.bjobs(job.job_group) if r.state == "PEND")
-        if pending >= cap:
-            raise ResolveError(
-                "policy_violation",
-                f"session already has {pending} pending jobs (limit {cap}); wait for some to start",
-            )
-
     wrapper = render_wrapper(
         job,
         state_dir=str(ctx.state.root),
@@ -83,7 +73,9 @@ def op_submit(req: Request, ctx: BrokerContext) -> dict:
             json.dumps({"spec": req.job.to_dict(), "resolved": job.to_response()}, indent=1),
         )
         ctx.state.write_private(pdir / WRAPPER_NAME, wrapper)
-        result = ctx.lsf.bsub(job.bsub_args(str(ctx.state.root)), wrapper)
+        with ctx.state.submit_lock():
+            _check_pending_cap(ctx)
+            result = ctx.lsf.bsub(job.bsub_args(str(ctx.state.root)), wrapper)
     except BaseException:
         ctx.state.discard_pending(token)
         raise
@@ -106,6 +98,20 @@ def op_submit(req: Request, ctx: BrokerContext) -> dict:
         broker_job_dir=str(dest),
         **{**job.to_response(), "queue": result.queue},
     )
+
+
+def _check_pending_cap(ctx: BrokerContext) -> None:
+    """Counted over every session of the user (bjobs -g on the parent group includes the
+    session subgroups): the session name is the agent's to choose."""
+    cap = ctx.policy.limits.max_pending_per_user
+    if not cap:
+        return
+    pending = sum(1 for r in ctx.lsf.bjobs(f"/csub/{ctx.user}") if r.state == "PEND")
+    if pending >= cap:
+        raise ResolveError(
+            "policy_violation",
+            f"you already have {pending} pending csub jobs (limit {cap}); wait for some to start",
+        )
 
 
 def _records_for(req: Request, ctx: BrokerContext) -> dict[str, JobRecord]:
