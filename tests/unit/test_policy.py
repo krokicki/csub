@@ -153,6 +153,18 @@ def test_broker_dirs_must_not_be_agent_writable(make_policy, roots, scripts_dir,
     assert p.state_dir == str(roots.outside / "state")
 
 
+def test_policy_file_must_not_be_agent_writable(policy_dict, roots, tmp_home):
+    """A --policy under an allowed root could be rewritten from a job; every broker re-reads
+    it per request, so that would hand the agent the whole policy."""
+    exposed = roots.allowed / "cfg" / "broker.toml"
+    exposed.parent.mkdir()
+    write_policy(exposed, policy_dict)
+    with pytest.raises(PolicyError, match="policy file.*allowed root"):
+        load_policy(exposed, home=str(tmp_home), check_fs=False)
+    fine = write_policy(tmp_home / ".config" / "csub" / "broker.toml", policy_dict)
+    assert load_policy(fine, home=str(tmp_home), check_fs=False).source == str(fine)
+
+
 def test_home_inside_allowed_root_is_ok(tmp_path: Path, policy_dict):
     """Janelia homes are /groups/<lab>/home/<user>: $HOME under the allowed root must work."""
     base = tmp_path.resolve()

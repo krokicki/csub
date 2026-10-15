@@ -391,11 +391,14 @@ def parse_policy(  # noqa: C901 - one validator
     # --- trust-boundary placement of broker-owned directories ---
     home_real = os.path.realpath(home)
     roots_real = [os.path.realpath(r) for r in allowed_roots]
-    for label, d in (
+    owned = [
         ("state_dir", state_dir),
         ("sandbox_scripts_dir", scripts_dir),
         ("scratch_root", scratch_root),
-    ):
+    ]
+    if source.startswith("/"):  # the policy file itself, when loaded from disk
+        owned.append(("policy file", os.path.dirname(source)))
+    for label, d in owned:
         d_real = os.path.realpath(d)
         if is_under(d_real, home_real):
             continue
