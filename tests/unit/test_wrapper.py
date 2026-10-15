@@ -16,6 +16,7 @@ from csub.broker.wrapper import (
     EXIT_CD,
     EXIT_INNER_MKDIR,
     EXIT_NO_BROKER,
+    EXIT_PATH_CHANGED,
     EXIT_SCRIPT_WRITE,
     check_no_directives,
     mounts_env_value,
@@ -279,14 +280,14 @@ def test_execute_missing_broker_socket(make_spec, policy, ctx, exec_env):
 
 def test_execute_inner_mkdir_failure(make_spec, policy, ctx, exec_env, project_dir):
     job = resolve(make_spec(), policy, ctx)
-    import shutil
-
-    # The job dir's parent becomes a file between validation and execution: mkdir -p fails
-    # inside the sandbox and the wrapper records a wrapper-stage exit code.
-    shutil.rmtree(project_dir)
-    project_dir.write_text("not a directory any more")
-    r, job_dir, _ = exec_env(job, job_id="47")
-    assert r.returncode == EXIT_INNER_MKDIR
+    # The cwd becomes unwritable between validation and execution: mkdir -p fails inside the
+    # sandbox and the wrapper records a wrapper-stage exit code.
+    project_dir.chmod(0o555)
+    try:
+        r, job_dir, _ = exec_env(job, job_id="47")
+    finally:
+        project_dir.chmod(0o755)
+    assert r.returncode == EXIT_INNER_MKDIR, r.stderr
     assert (job_dir / "exit_code").read_text() == f"{EXIT_INNER_MKDIR}\n"
 
 
@@ -297,8 +298,58 @@ def test_execute_sandbox_failure_propagates(make_spec, policy, ctx, exec_env):
 
 
 def test_exit_code_constants_are_distinct():
-    codes = {EXIT_NO_BROKER, EXIT_SCRIPT_WRITE, EXIT_CD}
-    assert len(codes) == 3 and all(90 <= c < 100 for c in codes)
+    codes = {EXIT_NO_BROKER, EXIT_SCRIPT_WRITE, EXIT_CD, EXIT_INNER_MKDIR, EXIT_PATH_CHANGED}
+    assert len(codes) == 5 and all(90 <= c < 100 for c in codes)
+
+
+# --- mount identity pinning (symlink swap between submit and start) -----------------------
+
+
+def test_pin_lines_cover_every_mount_and_cwd(render, project_dir, roots):
+    sub = project_dir / "sub"
+    sub.mkdir()
+    job, text, _ = render(cwd=str(sub))
+    pins = [ln for ln in text.splitlines() if "changed since submission" in ln]
+    assert len(pins) == 3  # project rw, nrs ro, cwd
+    for i, p in enumerate([str(project_dir), str(roots.nrs), str(sub)]):
+        assert f'[ "$(readlink -f -- {shlex.quote(p)})" = {shlex.quote(p)} ]' in pins[i]
+        assert f"PIN{i}=$(stat -c %d:%i -- {shlex.quote(p)})" in pins[i]
+        assert f'[ "$(stat -c %d:%i -- {shlex.quote(p)})" = "${i + 7}" ] || exit 99' in text
+    assert text.index(pins[-1]) < text.index("podman-run.sh")
+    assert text.rstrip("\n").splitlines()[-5].endswith('"$PIN0" "$PIN1" "$PIN2"')
+    # cwd equal to a mount is pinned once
+    _, text, _ = render()
+    assert sum("changed since submission" in ln for ln in text.splitlines()) == 2
+
+
+def test_execute_swapped_mount_is_refused(make_spec, policy, ctx, exec_env, project_dir, roots):
+    """Validated at submit; replaced with a symlink to somewhere else while pending."""
+    job = resolve(make_spec(), policy, ctx)
+    elsewhere = roots.outside / "elsewhere"
+    elsewhere.mkdir()
+    os.rename(project_dir, project_dir.with_name("old"))
+    project_dir.symlink_to(elsewhere)
+    r, job_dir, _ = exec_env(job, job_id="50")
+    assert r.returncode == EXIT_PATH_CHANGED and "changed since submission" in r.stderr
+    assert not (job_dir / "exit_code").exists()  # never reached the sandbox
+    assert not (elsewhere / ".csub").exists()
+
+
+def test_inner_refuses_wrong_identity(make_spec, policy, ctx, project_dir):
+    """The in-sandbox check: what got mounted must be what the wrapper recorded."""
+    job = resolve(make_spec(), policy, ctx)
+    inner = render_inner(job)
+    good = [
+        f"{os.stat(p).st_dev}:{os.stat(p).st_ino}" for p in (job.mounts[0].path, job.mounts[1].path)
+    ]
+    args = ["sh", "-c", inner, "csub-job", "1", "", "", "", "0", "/nonexistent.sock"]
+    r = subprocess.run([*args, "0:0", good[1]], capture_output=True, text=True)
+    assert r.returncode == EXIT_PATH_CHANGED
+    r = subprocess.run([*args, *good], capture_output=True, text=True)
+    assert (
+        r.returncode == 0
+        and (project_dir / ".csub" / "jobs" / "1" / "stdout").read_text() == "hi\n"
+    )
 
 
 # --- injected client -----------------------------------------------------------------------

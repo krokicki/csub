@@ -9,6 +9,8 @@ SCRATCH=<P2>/testuser/csub/"$LSB_JOBID"; mkdir -p "$SCRATCH" || exit 98
 BROKER_PID=$!
 trap 'kill "$BROKER_PID" 2>/dev/null' EXIT
 i=0; while [ ! -S "$JOB_DIR/csub.sock" ]; do i=$((i + 1)); [ "$i" -gt 100 ] && exit 93; sleep 0.1; done
+[ "$(readlink -f -- <P0>)" = <P0> ] && [ -d <P0> ] && PIN0=$(stat -c %d:%i -- <P0>) || { echo "csub: <P0> changed since submission" >&2; exit 99; }
+[ "$(readlink -f -- <P1>)" = <P1> ] && [ -d <P1> ] && PIN1=$(stat -c %d:%i -- <P1>) || { echo "csub: <P1> changed since submission" >&2; exit 99; }
 /home/u/.local/share/csub/agentic-sandbox/scripts/podman-run.sh \
     --keep-id \
     --image ghcr.io/test/agent:latest \
@@ -32,13 +34,15 @@ export CSUB_WALLTIME_MIN=60 CSUB_DEADLINE_EPOCH=$(($5 + 3600))
 [ -n "$4" ] && export LSB_DJOB_NUMPROC="$4"
 export MY_PROJECT_X='"'"'a '"'"'"'"'"'"'"'"'b'"'"'"'"'"'"'"'"' $c'"'"'
 export OMP_NUM_THREADS=4
+[ "$(stat -c %d:%i -- <P0>)" = "$7" ] || exit 99
+[ "$(stat -c %d:%i -- <P1>)" = "$8" ] || exit 99
 mkdir -p "$J" "$HOME" || exit 96
 cd <P0> || exit 95
 printf '"'"'%s'"'"' '"'"'#!/bin/bash
 echo "it'"'"'"'"'"'"'"'"'s $HOME"
 '"'"' >"$J/script" && chmod u+x "$J/script" || exit 94
 exec "$J/script" >"$J/stdout" 2>"$J/stderr"
-' csub-job "$LSB_JOBID" "${CUDA_VISIBLE_DEVICES:-}" "$SCRATCH" "${LSB_DJOB_NUMPROC:-}" "$(date +%s)" "$JOB_DIR/csub.sock"
+' csub-job "$LSB_JOBID" "${CUDA_VISIBLE_DEVICES:-}" "$SCRATCH" "${LSB_DJOB_NUMPROC:-}" "$(date +%s)" "$JOB_DIR/csub.sock" "$PIN0" "$PIN1"
 rc=$?
 [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"
 echo "$rc" > "$JOB_DIR/exit_code"
