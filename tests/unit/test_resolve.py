@@ -415,8 +415,39 @@ def test_lsf_extra(make_spec, policy, ctx, make_policy):
     p2 = make_policy(broker={"lsf_extra_allow": [".*"]})
     reject("policy_violation", "set by the broker", make_spec(lsf_extra=["-q gpu_h100"]), p2, ctx)
     reject("invalid_request", "not supported", make_spec(lsf_extra=["-Is"]), p2, ctx)
-    reject("invalid_request", "must start with a flag", make_spec(lsf_extra=["proj"]), p2, ctx)
+    reject("invalid_request", "not a flag", make_spec(lsf_extra=["proj"]), p2, ctx)
     reject("invalid_request", "quotation", make_spec(lsf_extra=["-P 'unterminated"]), p2, ctx)
+
+
+def test_lsf_extra_is_parsed_by_arity(make_spec, ctx, make_policy):
+    """A permissive regex must not let a second flag or a positional word ride behind a
+    permitted flag's value: -E would run a command outside the sandbox, and a positional
+    makes bsub run it as the job instead of the spooled wrapper."""
+    p = make_policy(broker={"lsf_extra_allow": [".*"]})
+    assert resolve(make_spec(lsf_extra=["-R span[hosts=1] -x -r"]), p, ctx).lsf_extra_argv == (
+        "-R",
+        "span[hosts=1]",
+        "-x",
+        "-r",
+    )
+    reject(
+        "policy_violation",
+        "-E is not available",
+        make_spec(lsf_extra=["-R span[hosts=1] -E id"]),
+        p,
+        ctx,
+    )
+    reject(
+        "invalid_request",
+        "not a flag",
+        make_spec(lsf_extra=["-R span[hosts=1] /bin/sh -c id"]),
+        p,
+        ctx,
+    )
+    reject("invalid_request", "takes 1 argument", make_spec(lsf_extra=["-R"]), p, ctx)
+    reject("invalid_request", "takes 1 argument", make_spec(lsf_extra=["-R -x"]), p, ctx)
+    for flag in ("-E", "-Ep", "-f", "-G", "-U", "-u", "-yaml", "-json", "-jsdl", "-Zs"):
+        reject("policy_violation", "not available", make_spec(lsf_extra=[f"{flag} x"]), p, ctx)
 
 
 # --- the resolved job -----------------------------------------------------------------

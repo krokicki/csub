@@ -29,6 +29,10 @@ scratch_root = "/scratch"
 keep_id = true
 inject_client = true
 env_allow = ["OMP_NUM_THREADS", "ANTHROPIC_*"]
+# Regexes matched against a whole lsf_extra entry (e.g. '-R span\\[hosts=1\\]'); `.*` anywhere
+# admits anything the entry carries. Entries are then parsed by flag: only resource, limit
+# and scheduling flags are available (LSF_EXTRA_FLAGS in the broker), each with its argument
+# count, so neither a second flag nor a job command can hide behind a permitted value.
 lsf_extra_allow = []
 forbidden_name_tokens = ["spark", "janelia", "master", "int"]
 

@@ -53,6 +53,18 @@ OWNED_BSUB_FLAGS = frozenset(
 UNSUPPORTED_BSUB_FLAGS = frozenset(
     {"-I", "-Ip", "-Is", "-IS", "-ISp", "-ISs", "-IX", "-XF", "-K", "-app", "-m", "-tty", "-env"}
 )
+# The only bsub flags an admin can open up through lsf_extra_allow, with the number of
+# arguments each takes. Resource, limit and scheduling flags; nothing that runs a command
+# (-E, -Ep), moves files (-f), changes identity or billing (-G, -U, -u), or reads a job
+# description from a file (-yaml, -json, -jsdl). Parsing by arity is what stops a second flag
+# or a positional word hiding behind a permitted flag's value: a positional makes bsub run
+# that word as the job command instead of the spooled wrapper, outside the sandbox.
+LSF_EXTRA_FLAGS: dict[str, int] = {
+    "-R": 1, "-M": 1, "-x": 0, "-r": 0, "-rn": 0, "-B": 0, "-N": 0, "-Ne": 0,
+    "-sla": 1, "-b": 1, "-t": 1, "-c": 1, "-C": 1, "-D": 1, "-F": 1, "-p": 1, "-S": 1,
+    "-T": 1, "-v": 1, "-sp": 1, "-ptl": 1, "-hl": 0, "-ul": 0, "-ar": 0, "-freq": 1,
+    "-Lp": 1, "-rnc": 1, "-P": 1,
+}  # fmt: skip
 
 _NAME_BAD_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 _NAME_SPLIT = re.compile(r"[_.-]+")
@@ -388,18 +400,31 @@ def check_lsf_extra(extra: tuple[str, ...], policy: Policy) -> tuple[str, ...]:
             raise _invalid(f"lsf_extra entry {item!r}: {e}") from None
         if not parts:
             raise _invalid("lsf_extra entry is empty")
-        if parts[0] in UNSUPPORTED_BSUB_FLAGS:
-            raise _invalid(f"bsub flag {parts[0]} is not supported")
-        if parts[0] in OWNED_BSUB_FLAGS:
-            raise _policy(f"bsub flag {parts[0]} is set by the broker and cannot be overridden")
-        if policy.lsf.project and parts[0].startswith("-P"):
-            # LSF takes the last -P; with lsf.project set, the policy's must be the only one.
-            raise _policy(
-                "bsub flag -P is set by the policy (lsf.project) and cannot be overridden"
-            )
-        if not parts[0].startswith("-"):
-            raise _invalid(f"lsf_extra entry {item!r} must start with a flag")
-        argv += parts
+        i = 0
+        while i < len(parts):
+            flag = parts[i]
+            if flag in UNSUPPORTED_BSUB_FLAGS:
+                raise _invalid(f"bsub flag {flag} is not supported")
+            if flag in OWNED_BSUB_FLAGS:
+                raise _policy(f"bsub flag {flag} is set by the broker and cannot be overridden")
+            if policy.lsf.project and flag.startswith("-P"):
+                # LSF takes the last -P; with lsf.project set, the policy's must be the only one.
+                raise _policy(
+                    "bsub flag -P is set by the policy (lsf.project) and cannot be overridden"
+                )
+            arity = LSF_EXTRA_FLAGS.get(flag)
+            if arity is None:
+                if flag.startswith("-"):
+                    raise _policy(f"bsub flag {flag} is not available through lsf_extra")
+                raise _invalid(
+                    f"lsf_extra entry {item!r}: {flag!r} is not a flag; bsub would run it as "
+                    "the job command instead of the job script"
+                )
+            values = parts[i + 1 : i + 1 + arity]
+            if len(values) < arity or any(v.startswith("-") for v in values):
+                raise _invalid(f"bsub flag {flag} takes {arity} argument(s) in lsf_extra")
+            argv += [flag, *values]
+            i += 1 + arity
     return tuple(argv)
 
 
