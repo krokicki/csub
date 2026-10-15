@@ -10,8 +10,10 @@ def normalize_abs(path: str) -> str:
     """Return ``os.path.normpath(path)``; raise ``ValueError`` unless ``path`` is absolute."""
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError(f"not an absolute path: {path!r}")
-    if "\0" in path:
-        raise ValueError("path contains NUL")
+    if any(ord(c) < 32 for c in path):
+        # A newline would end the shell quoting's line in the spooled wrapper and let the next
+        # line be read by LSF as a #BSUB directive.
+        raise ValueError("path contains a control character")
     return os.path.normpath(path)
 
 
