@@ -242,8 +242,8 @@ class Client:
             if s.cwd:
                 d = _logs.job_dir(s.cwd, s.job_id)
                 out_path, err_path = str(d / "stdout"), str(d / "stderr")
-                out = _logs.tail_file(d / "stdout", tail_lines)
-                err = _logs.tail_file(d / "stderr", tail_lines)
+                out = _logs.read_output(s.cwd, s.job_id, "stdout", tail_lines)
+                err = _logs.read_output(s.cwd, s.job_id, "stderr", tail_lines)
             entries.append(WaitEntry(s, out, err, out_path, err_path))
         return WaitResult(jobs=entries, timed_out=timed_out, elapsed_s=clock() - start)
 
