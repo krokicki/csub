@@ -82,6 +82,27 @@ def _policy(msg: str) -> ResolveError:
     return ResolveError("policy_violation", msg)
 
 
+def path_identity(path: str) -> str:
+    """``st_dev:st_ino`` of the directory at ``path``, reached from ``/`` one component at a
+    time with O_NOFOLLOW, so no symlink anywhere in it is followed (the path is canonical by
+    the time this runs). The launcher later bind-mounts the path by *name*; a bind mount keeps
+    the source's device and inode, so the in-sandbox script can check it got this directory
+    and not whatever the name was pointed at while the job sat in the queue. O_PATH needs only
+    search permission on the ancestors."""
+    flags = os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_CLOEXEC
+    fd = os.open("/", flags)
+    try:
+        for comp in path.split("/"):
+            if comp:
+                nfd = os.open(comp, flags, dir_fd=fd)
+                os.close(fd)
+                fd = nfd
+        st = os.fstat(fd)
+    finally:
+        os.close(fd)
+    return f"{st.st_dev}:{st.st_ino}"
+
+
 @dataclass(frozen=True)
 class ResolveContext:
     user: str
@@ -89,14 +110,23 @@ class ResolveContext:
     protected_dirs: tuple[str, ...] = ()  # realpaths the agent must never be able to write
     realpath: Callable[[str], str] = os.path.realpath
     isdir: Callable[[str], bool] = os.path.isdir
+    identity: Callable[[str], str] = path_identity
     # job_id -> (user, session) of a job this broker submitted, or None
     lookup_job: Callable[[str], tuple[str, str] | None] = lambda _job_id: None
+
+
+def _identity(ctx: ResolveContext, path: str, what: str) -> str:
+    try:
+        return ctx.identity(path)
+    except OSError as e:
+        raise _invalid(f"{what} {path}: {e.strerror}") from None
 
 
 @dataclass(frozen=True)
 class ResolvedMount:
     path: str
     mode: str
+    identity: str  # see path_identity
 
     def to_dict(self) -> dict[str, str]:
         return {"path": self.path, "mode": self.mode}
@@ -117,6 +147,7 @@ class ResolvedJob:
     image: str
     mounts: tuple[ResolvedMount, ...]
     cwd: str
+    cwd_identity: str
     command: tuple[str, ...] | str
     shell: bool
     env: dict[str, str]
@@ -329,7 +360,9 @@ def check_mounts(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> tuple[Re
         for other in resolved:
             if is_under(m.path, other.path) or is_under(other.path, m.path):
                 raise _invalid(f"mounts {other.path} and {m.path} overlap")
-        resolved.append(ResolvedMount(path=m.path, mode=mode))
+        resolved.append(
+            ResolvedMount(path=m.path, mode=mode, identity=_identity(ctx, m.path, "mount"))
+        )
     return tuple(resolved)
 
 
@@ -449,6 +482,7 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
 
     mounts = check_mounts(spec, policy, ctx)
     cwd = check_cwd(spec, mounts, ctx)
+    cwd_identity = _identity(ctx, cwd, "cwd")
 
     queue, walltime = select_queue(spec, policy)
     lim = policy.limits
@@ -514,6 +548,7 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
         image=image,
         mounts=mounts,
         cwd=cwd,
+        cwd_identity=cwd_identity,
         command=spec.command,
         shell=spec.shell,
         env=env,

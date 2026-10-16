@@ -43,38 +43,23 @@ def mounts_env_value(job: ResolvedJob) -> str:
     return ",".join(f"{m.path}:{m.mode}" for m in job.mounts)
 
 
-def pinned_paths(job: ResolvedJob) -> list[str]:
-    """Agent-controlled directories the launcher bind-mounts by *name*: every mount, and the
-    cwd (bwrap binds ``$PWD``). The broker validated them at submit time; the job may start
-    hours later, and the agent can replace a directory under its own rw mount with a symlink
-    in between, so the wrapper re-checks each one just before launching and records its
-    device:inode, and the inner script compares what it actually sees against that before it
-    runs anything. A swap before the re-check fails the realpath test, one between the
-    re-check and the mount fails the inner comparison, and one after the mount is too late.
-    (bwrap could pin by descriptor with --bind-fd; podman takes only paths, so both backends
-    use the same two checks.)"""
-    return list(dict.fromkeys([m.path for m in job.mounts] + [job.cwd]))
-
-
-def pin_lines(job: ResolvedJob) -> list[str]:
-    """Wrapper side: ``readlink -f`` must give the path back unchanged and it must be a
-    directory; then remember its identity in ``PIN<i>``."""
-    out = []
-    for i, p in enumerate(pinned_paths(job)):
-        out.append(
-            f'[ "$(readlink -f -- {q(p)})" = {q(p)} ] && [ -d {q(p)} ] '
-            f"&& PIN{i}=$(stat -c %d:%i -- {q(p)}) "
-            f'|| {{ echo "csub: {p} changed since submission" >&2; exit {EXIT_PATH_CHANGED}; }}'
-        )
-    return out
+def pinned_paths(job: ResolvedJob) -> list[tuple[str, str]]:
+    """Agent-controlled directories the launcher bind-mounts by *name*, with the identity the
+    broker recorded for each at submit (``path_identity``): every mount, and the cwd (bwrap
+    binds ``$PWD``). The job may start hours later and the agent can point a name under its
+    own rw mount somewhere else in between, so the inner script compares what it actually got
+    against the recorded identity before it runs anything. Nothing is checked by path on the
+    host side: a check there would itself race with the mount."""
+    pins = {m.path: m.identity for m in job.mounts}
+    pins.setdefault(job.cwd, job.cwd_identity)
+    return list(pins.items())
 
 
 def render_inner(job: ResolvedJob, *, client_src: str | None = None) -> str:
     """The /bin/sh script executed inside the sandbox.
 
     Positional parameters: $1 LSB_JOBID, $2 CUDA_VISIBLE_DEVICES (maybe empty), $3 scratch
-    dir (maybe empty), $4 LSB_DJOB_NUMPROC (maybe empty), $5 wrapper start epoch, $6 socket,
-    $7.. the device:inode of each ``pinned_paths`` entry as the wrapper saw it.
+    dir (maybe empty), $4 LSB_DJOB_NUMPROC (maybe empty), $5 wrapper start epoch, $6 socket.
 
     ``client_src`` is the directory of the installed ``csub`` package, bind-mounted read-only
     by the wrapper so that any image gets `csub` / `import csub` (needs a python3 inside).
@@ -96,10 +81,13 @@ def render_inner(job: ResolvedJob, *, client_src: str | None = None) -> str:
     ]
     for key in sorted(job.env):
         lines.append(f"export {key}={q(job.env[key])}")
-    for i, p in enumerate(pinned_paths(job)):
-        # a bind mount keeps the source's st_dev:st_ino, so this is the directory the wrapper
-        # checked, not whatever the name resolved to when the launcher mounted it
-        lines.append(f'[ "$(stat -c %d:%i -- {q(p)})" = "${i + 7}" ] || exit {EXIT_PATH_CHANGED}')
+    for p, ident in pinned_paths(job):
+        # a bind mount keeps the source's st_dev:st_ino, so this is the directory the broker
+        # validated, not whatever the name resolved to when the launcher mounted it
+        lines.append(
+            f'[ "$(stat -c %d:%i -- {q(p)})" = {q(ident)} ] || '
+            f"{{ echo {q(f'csub: {p} changed since submission')} >&2; exit {EXIT_PATH_CHANGED}; }}"
+        )
     lines += [
         f'mkdir -p "$J" "$HOME" || exit {EXIT_INNER_MKDIR}',
     ]
@@ -158,7 +146,6 @@ def sandbox_run_line(
         f"-- /bin/sh -c {q(inner)} csub-job "
         '"$LSB_JOBID" "${CUDA_VISIBLE_DEVICES:-}" "$SCRATCH" "${LSB_DJOB_NUMPROC:-}" '
         f'"$(date +%s)" "$JOB_DIR/{SOCKET_NAME}"'
-        + "".join(f' "$PIN{i}"' for i in range(len(pinned_paths(job))))
     )
     return " \\\n    ".join(segments)
 
@@ -206,7 +193,6 @@ def render_wrapper(
         f'i=0; while [ ! -S "$JOB_DIR/{SOCKET_NAME}" ]; do '
         f'i=$((i + 1)); [ "$i" -gt 100 ] && exit {EXIT_NO_BROKER}; sleep 0.1; done',
     ]
-    lines += pin_lines(job)
     if job.sandbox == "bwrap":
         # sandbox-run.sh binds $PWD read-write; that must be the job's cwd, never $JOB_DIR.
         lines.append(f"cd {q(job.cwd)} || exit {EXIT_CD}")

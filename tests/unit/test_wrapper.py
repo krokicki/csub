@@ -1,5 +1,6 @@
 """Wrapper rendering: snapshots, shell syntax, quoting, and a real execution with the fakes."""
 
+import dataclasses
 import json
 import os
 import shlex
@@ -11,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from csub.broker.resolve import resolve
+from csub.broker.resolve import path_identity, resolve
 from csub.broker.wrapper import (
     EXIT_CD,
     EXIT_INNER_MKDIR,
@@ -20,6 +21,7 @@ from csub.broker.wrapper import (
     EXIT_SCRIPT_WRITE,
     check_no_directives,
     mounts_env_value,
+    pinned_paths,
     render_inner,
     render_wrapper,
 )
@@ -30,9 +32,12 @@ SCRIPTS = "/home/u/.local/share/csub/agentic-sandbox/scripts"
 BROKER = "/home/u/.local/pipx/venvs/csub/bin/python -m csub.broker"
 
 
-def _norm(text: str, *paths: str) -> str:
+def _norm(text: str, *paths: str, job=None) -> str:
     for i, p in enumerate(paths):
         text = text.replace(p, f"<P{i}>")
+    if job is not None:  # device:inode literals differ per machine
+        for i, (_, ident) in enumerate(pinned_paths(job)):
+            text = text.replace(ident, f"<I{i}>")
     return text
 
 
@@ -43,7 +48,11 @@ def render(make_spec, policy, ctx, project_dir, roots):
         text = render_wrapper(
             job, state_dir=STATE, scripts_dir=SCRIPTS, broker_cmd=BROKER, home="/home/u"
         )
-        return job, text, _norm(text, str(project_dir), str(roots.nrs), str(roots.scratch_root))
+        return (
+            job,
+            text,
+            _norm(text, str(project_dir), str(roots.nrs), str(roots.scratch_root), job=job),
+        )
 
     return _render
 
@@ -305,25 +314,55 @@ def test_exit_code_constants_are_distinct():
 # --- mount identity pinning (symlink swap between submit and start) -----------------------
 
 
-def test_pin_lines_cover_every_mount_and_cwd(render, project_dir, roots):
+def test_pins_cover_every_mount_and_cwd(render, project_dir, roots):
     sub = project_dir / "sub"
     sub.mkdir()
     job, text, _ = render(cwd=str(sub))
     pins = [ln for ln in text.splitlines() if "changed since submission" in ln]
     assert len(pins) == 3  # project rw, nrs ro, cwd
     for i, p in enumerate([str(project_dir), str(roots.nrs), str(sub)]):
-        assert f'[ "$(readlink -f -- {shlex.quote(p)})" = {shlex.quote(p)} ]' in pins[i]
-        assert f"PIN{i}=$(stat -c %d:%i -- {shlex.quote(p)})" in pins[i]
-        assert f'[ "$(stat -c %d:%i -- {shlex.quote(p)})" = "${i + 7}" ] || exit 99' in text
-    assert text.index(pins[-1]) < text.index("podman-run.sh")
-    assert text.rstrip("\n").splitlines()[-5].endswith('"$PIN0" "$PIN1" "$PIN2"')
+        st = os.stat(p)
+        assert pins[i].startswith(
+            f'[ "$(stat -c %d:%i -- {shlex.quote(p)})" = {st.st_dev}:{st.st_ino} ] || '
+        )
+        assert pins[i].endswith("exit 99; }")
+    # the checks run inside the sandbox, before anything is created there
+    assert text.index(pins[-1]) < text.index('mkdir -p "$J"')
+    assert "$(readlink" not in text and "$PIN" not in text  # no host-side path checks
     # cwd equal to a mount is pinned once
     _, text, _ = render()
     assert sum("changed since submission" in ln for ln in text.splitlines()) == 2
 
 
+def test_pin_message_is_quoted(render, project_dir):
+    """The path goes into a diagnostic; it must never be interpolated into shell syntax."""
+    evil = project_dir / "$(touch REVIEW_HOST_EXECUTED)"
+    evil.mkdir()
+    job, text, _ = render(cwd=str(evil))
+    assert all(
+        shlex.quote(f"csub: {p} changed since submission") in text for p, _ in pinned_paths(job)
+    )
+    r = subprocess.run(["sh", "-n"], input=text, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_path_identity_follows_no_symlink(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    st = os.stat(real)
+    assert path_identity(str(real)) == f"{st.st_dev}:{st.st_ino}"
+    (tmp_path / "link").symlink_to(real)
+    with pytest.raises(OSError):
+        path_identity(str(tmp_path / "link"))
+    with pytest.raises(OSError):
+        path_identity(str(tmp_path / "link" / "x"))  # a symlinked ancestor is refused too
+    with pytest.raises(OSError):
+        path_identity(str(tmp_path / "missing"))
+
+
 def test_execute_swapped_mount_is_refused(make_spec, policy, ctx, exec_env, project_dir, roots):
-    """Validated at submit; replaced with a symlink to somewhere else while pending."""
+    """Validated at submit; replaced with a symlink to somewhere else while pending. The
+    sandbox is launched, but the inner script refuses before creating or running anything."""
     job = resolve(make_spec(), policy, ctx)
     elsewhere = roots.outside / "elsewhere"
     elsewhere.mkdir()
@@ -331,25 +370,23 @@ def test_execute_swapped_mount_is_refused(make_spec, policy, ctx, exec_env, proj
     project_dir.symlink_to(elsewhere)
     r, job_dir, _ = exec_env(job, job_id="50")
     assert r.returncode == EXIT_PATH_CHANGED and "changed since submission" in r.stderr
-    assert not (job_dir / "exit_code").exists()  # never reached the sandbox
+    assert (job_dir / "exit_code").read_text() == f"{EXIT_PATH_CHANGED}\n"
     assert not (elsewhere / ".csub").exists()
 
 
 def test_inner_refuses_wrong_identity(make_spec, policy, ctx, project_dir):
-    """The in-sandbox check: what got mounted must be what the wrapper recorded."""
+    """The in-sandbox check: what got mounted must be what the broker recorded."""
     job = resolve(make_spec(), policy, ctx)
-    inner = render_inner(job)
-    good = [
-        f"{os.stat(p).st_dev}:{os.stat(p).st_ino}" for p in (job.mounts[0].path, job.mounts[1].path)
-    ]
-    args = ["sh", "-c", inner, "csub-job", "1", "", "", "", "0", "/nonexistent.sock"]
-    r = subprocess.run([*args, "0:0", good[1]], capture_output=True, text=True)
-    assert r.returncode == EXIT_PATH_CHANGED
-    r = subprocess.run([*args, *good], capture_output=True, text=True)
-    assert (
-        r.returncode == 0
-        and (project_dir / ".csub" / "jobs" / "1" / "stdout").read_text() == "hi\n"
+    args = ["sh", "-c", render_inner(job), "csub-job", "1", "", "", "", "0", "/nonexistent.sock"]
+    r = subprocess.run(args, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (project_dir / ".csub" / "jobs" / "1" / "stdout").read_text() == "hi\n"
+    m0 = dataclasses.replace(job.mounts[0], identity="0:0")  # the cwd is this mount
+    bad = dataclasses.replace(job, mounts=(m0, *job.mounts[1:]))
+    r = subprocess.run(
+        [args[0], args[1], render_inner(bad), *args[3:]], capture_output=True, text=True
     )
+    assert r.returncode == EXIT_PATH_CHANGED and str(project_dir) in r.stderr
 
 
 # --- injected client -----------------------------------------------------------------------
