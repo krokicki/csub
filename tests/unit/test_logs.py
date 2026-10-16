@@ -56,6 +56,14 @@ def test_symlinks_are_refused(tree, tmp_path, where):
         read_output(str(cwd), "7", "stdout", 10)
 
 
+def test_relative_cwd(tree, monkeypatch):
+    cwd, _, _ = tree
+    monkeypatch.chdir(cwd)
+    assert read_logs(".", "7", tail=1)["stdout"] == "c\n"
+    monkeypatch.chdir(cwd.parent)
+    assert read_output("proj", "7", "stdout", 1) == "c\n"
+
+
 def test_not_a_regular_file(tree):
     cwd, jd, _ = tree
     (jd / "stderr").mkdir()

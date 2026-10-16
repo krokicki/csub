@@ -35,7 +35,9 @@ def _refuse(path: Path, e: OSError) -> CsubError:
 
 def _open_job_dir(cwd: str, job_id: str) -> int | None:
     """Descriptor on ``<cwd>/.csub/jobs/<id>``, or None if it does not exist yet."""
-    comps = [c for c in cwd.split("/") if c] + [".csub", "jobs", str(job_id)]
+    # abspath, not realpath: a relative --cwd is resolved against the process cwd, which the
+    # kernel reports symlink-free; a symlink anywhere else is for the walk to refuse
+    comps = [c for c in os.path.abspath(cwd).split("/") if c] + [".csub", "jobs", str(job_id)]
     fd = os.open("/", _DIR)
     try:
         for comp in comps:
