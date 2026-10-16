@@ -83,12 +83,15 @@ def _policy(msg: str) -> ResolveError:
 
 
 def path_identity(path: str) -> str:
-    """``st_dev:st_ino`` of the directory at ``path``, reached from ``/`` one component at a
-    time with O_NOFOLLOW, so no symlink anywhere in it is followed (the path is canonical by
-    the time this runs). The launcher later bind-mounts the path by *name*; a bind mount keeps
-    the source's device and inode, so the in-sandbox script can check it got this directory
-    and not whatever the name was pointed at while the job sat in the queue. O_PATH needs only
-    search permission on the ancestors."""
+    """Inode number of the directory at ``path``, reached from ``/`` one component at a time
+    with O_NOFOLLOW, so no symlink anywhere in it is followed (the path is canonical by the
+    time this runs). The launcher later bind-mounts the path by *name*; a bind mount keeps the
+    source's inode, so the in-sandbox script can check it got this directory and not whatever
+    the name was pointed at while the job sat in the queue. The inode alone, not st_dev: NFS
+    device numbers are allocated per client, so the submit host's and the compute node's
+    differ for the same export. Within one filesystem an inode identifies a directory; the
+    residual case is a swap to a directory on another filesystem that happens to carry the
+    same number. O_PATH needs only search permission on the ancestors."""
     flags = os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_CLOEXEC
     fd = os.open("/", flags)
     try:
@@ -100,7 +103,7 @@ def path_identity(path: str) -> str:
         st = os.fstat(fd)
     finally:
         os.close(fd)
-    return f"{st.st_dev}:{st.st_ino}"
+    return str(st.st_ino)
 
 
 @dataclass(frozen=True)

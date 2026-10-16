@@ -35,7 +35,7 @@ BROKER = "/home/u/.local/pipx/venvs/csub/bin/python -m csub.broker"
 def _norm(text: str, *paths: str, job=None) -> str:
     for i, p in enumerate(paths):
         text = text.replace(p, f"<P{i}>")
-    if job is not None:  # device:inode literals differ per machine
+    if job is not None:  # inode literals differ per machine
         for i, (_, ident) in enumerate(pinned_paths(job)):
             text = text.replace(ident, f"<I{i}>")
     return text
@@ -321,17 +321,26 @@ def test_pins_cover_every_mount_and_cwd(render, project_dir, roots):
     pins = [ln for ln in text.splitlines() if "changed since submission" in ln]
     assert len(pins) == 3  # project rw, nrs ro, cwd
     for i, p in enumerate([str(project_dir), str(roots.nrs), str(sub)]):
-        st = os.stat(p)
         assert pins[i].startswith(
-            f'[ "$(stat -c %d:%i -- {shlex.quote(p)})" = {st.st_dev}:{st.st_ino} ] || '
+            f'[ "$(stat -c %i -- {shlex.quote(p)})" = {os.stat(p).st_ino} ] || '
         )
         assert pins[i].endswith("exit 99; }")
-    # the checks run inside the sandbox, before anything is created there
-    assert text.index(pins[-1]) < text.index('mkdir -p "$J"')
+    # the checks run inside the sandbox, before anything is created there and before any
+    # job-controlled variable (LD_PRELOAD, PATH) is exported
+    inner = text[text.index("set -u") :]
+    assert inner.index(pins[-1]) < inner.index("export ")
     assert "$(readlink" not in text and "$PIN" not in text  # no host-side path checks
     # cwd equal to a mount is pinned once
     _, text, _ = render()
     assert sum("changed since submission" in ln for ln in text.splitlines()) == 2
+
+
+def test_pins_run_before_job_env(make_spec, make_policy, ctx, project_dir, tmp_path):
+    """LD_PRELOAD from the job env must not be live while the check runs."""
+    p = make_policy(broker={"env_allow": ["LD_PRELOAD"]})
+    job = resolve(make_spec(env={"LD_PRELOAD": str(tmp_path / "evil.so")}), p, ctx)
+    inner = render_inner(job)
+    assert inner.index("stat -c %i") < inner.index("export ")
 
 
 def test_pin_message_is_quoted(render, project_dir):
@@ -349,8 +358,7 @@ def test_pin_message_is_quoted(render, project_dir):
 def test_path_identity_follows_no_symlink(tmp_path):
     real = tmp_path / "real"
     real.mkdir()
-    st = os.stat(real)
-    assert path_identity(str(real)) == f"{st.st_dev}:{st.st_ino}"
+    assert path_identity(str(real)) == str(os.stat(real).st_ino)
     (tmp_path / "link").symlink_to(real)
     with pytest.raises(OSError):
         path_identity(str(tmp_path / "link"))
@@ -381,7 +389,7 @@ def test_inner_refuses_wrong_identity(make_spec, policy, ctx, project_dir):
     r = subprocess.run(args, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert (project_dir / ".csub" / "jobs" / "1" / "stdout").read_text() == "hi\n"
-    m0 = dataclasses.replace(job.mounts[0], identity="0:0")  # the cwd is this mount
+    m0 = dataclasses.replace(job.mounts[0], identity="0")  # the cwd is this mount
     bad = dataclasses.replace(job, mounts=(m0, *job.mounts[1:]))
     r = subprocess.run(
         [args[0], args[1], render_inner(bad), *args[3:]], capture_output=True, text=True

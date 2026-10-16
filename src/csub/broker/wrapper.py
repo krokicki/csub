@@ -65,8 +65,17 @@ def render_inner(job: ResolvedJob, *, client_src: str | None = None) -> str:
     by the wrapper so that any image gets `csub` / `import csub` (needs a python3 inside).
     """
     cwd = q(job.cwd)
-    lines = [
-        "set -u",
+    lines = ["set -u"]
+    for p, ident in pinned_paths(job):
+        # First, before any export: the job's env (LD_PRELOAD, PATH, whatever the policy lets
+        # through) must not be in effect while this runs. A bind mount keeps the source's
+        # inode, so this is the directory the broker validated, not whatever the name
+        # resolved to when the launcher mounted it.
+        lines.append(
+            f'[ "$(stat -c %i -- {q(p)})" = {q(ident)} ] || '
+            f"{{ echo {q(f'csub: {p} changed since submission')} >&2; exit {EXIT_PATH_CHANGED}; }}"
+        )
+    lines += [
         f"export HOME={cwd}/.csub/home",
         f'J={cwd}/.csub/jobs/"$1"',
         f'export USER={q(job.user)} LOGNAME={q(job.user)} LSB_JOBID="$1"',
@@ -81,13 +90,6 @@ def render_inner(job: ResolvedJob, *, client_src: str | None = None) -> str:
     ]
     for key in sorted(job.env):
         lines.append(f"export {key}={q(job.env[key])}")
-    for p, ident in pinned_paths(job):
-        # a bind mount keeps the source's st_dev:st_ino, so this is the directory the broker
-        # validated, not whatever the name resolved to when the launcher mounted it
-        lines.append(
-            f'[ "$(stat -c %d:%i -- {q(p)})" = {q(ident)} ] || '
-            f"{{ echo {q(f'csub: {p} changed since submission')} >&2; exit {EXIT_PATH_CHANGED}; }}"
-        )
     lines += [
         f'mkdir -p "$J" "$HOME" || exit {EXIT_INNER_MKDIR}',
     ]

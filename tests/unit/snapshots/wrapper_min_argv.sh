@@ -15,6 +15,8 @@ i=0; while [ ! -S "$JOB_DIR/csub.sock" ]; do i=$((i + 1)); [ "$i" -gt 100 ] && e
     --ro <P1> \
     --ro "$JOB_DIR/csub.sock" \
     -- /bin/sh -c 'set -u
+[ "$(stat -c %i -- <P0>)" = <I0> ] || { echo '"'"'csub: <P0> changed since submission'"'"' >&2; exit 99; }
+[ "$(stat -c %i -- <P1>)" = <I1> ] || { echo '"'"'csub: <P1> changed since submission'"'"' >&2; exit 99; }
 export HOME=<P0>/.csub/home
 J=<P0>/.csub/jobs/"$1"
 export USER=testuser LOGNAME=testuser LSB_JOBID="$1"
@@ -25,8 +27,6 @@ export CSUB_WALLTIME_MIN=60 CSUB_DEADLINE_EPOCH=$(($5 + 3600))
 [ -n "$2" ] && export CUDA_VISIBLE_DEVICES="$2"
 [ -n "$3" ] && export TMPDIR="$3"
 [ -n "$4" ] && export LSB_DJOB_NUMPROC="$4"
-[ "$(stat -c %d:%i -- <P0>)" = <I0> ] || { echo '"'"'csub: <P0> changed since submission'"'"' >&2; exit 99; }
-[ "$(stat -c %d:%i -- <P1>)" = <I1> ] || { echo '"'"'csub: <P1> changed since submission'"'"' >&2; exit 99; }
 mkdir -p "$J" "$HOME" || exit 96
 cd <P0> || exit 95
 exec sh -c '"'"'echo hi'"'"' >"$J/stdout" 2>"$J/stderr"
