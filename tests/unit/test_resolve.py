@@ -446,7 +446,7 @@ def test_lsf_extra_is_parsed_by_arity(make_spec, ctx, make_policy):
     )
     reject("invalid_request", "takes 1 argument", make_spec(lsf_extra=["-R"]), p, ctx)
     reject("invalid_request", "takes 1 argument", make_spec(lsf_extra=["-R -x"]), p, ctx)
-    for flag in ("-E", "-Ep", "-f", "-G", "-U", "-u", "-yaml", "-json", "-jsdl", "-Zs"):
+    for flag in ("-E", "-Ep", "-rnc", "-f", "-G", "-U", "-u", "-yaml", "-json", "-jsdl", "-Zs"):
         reject("policy_violation", "not available", make_spec(lsf_extra=[f"{flag} x"]), p, ctx)
 
 

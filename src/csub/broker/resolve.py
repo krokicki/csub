@@ -55,7 +55,7 @@ UNSUPPORTED_BSUB_FLAGS = frozenset(
 )
 # The only bsub flags an admin can open up through lsf_extra_allow, with the number of
 # arguments each takes. Resource, limit and scheduling flags; nothing that runs a command
-# (-E, -Ep), moves files (-f), changes identity or billing (-G, -U, -u), or reads a job
+# (-E, -Ep, -rnc), moves files (-f), changes identity or billing (-G, -U, -u), or reads a job
 # description from a file (-yaml, -json, -jsdl). Parsing by arity is what stops a second flag
 # or a positional word hiding behind a permitted flag's value: a positional makes bsub run
 # that word as the job command instead of the spooled wrapper, outside the sandbox.
@@ -63,7 +63,7 @@ LSF_EXTRA_FLAGS: dict[str, int] = {
     "-R": 1, "-M": 1, "-x": 0, "-r": 0, "-rn": 0, "-B": 0, "-N": 0, "-Ne": 0,
     "-sla": 1, "-b": 1, "-t": 1, "-c": 1, "-C": 1, "-D": 1, "-F": 1, "-p": 1, "-S": 1,
     "-T": 1, "-v": 1, "-sp": 1, "-ptl": 1, "-hl": 0, "-ul": 0, "-ar": 0, "-freq": 1,
-    "-Lp": 1, "-rnc": 1, "-P": 1,
+    "-Lp": 1, "-P": 1,
 }  # fmt: skip
 
 _NAME_BAD_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
