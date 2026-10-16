@@ -7,7 +7,7 @@ the inner (in-sandbox) script only as positional parameters.
 
 Wrapper-stage exit codes (so ``exit_code`` tells them apart from the command's):
 
-  93  the per-job broker did not create its socket
+  93  the per-job broker did not create its socket, or the job record never appeared
   94  could not write the script body (shell mode)
   95  could not cd into the job's cwd
   96  could not create the in-sandbox job dir / HOME
@@ -23,6 +23,7 @@ import shlex
 from csub import __version__
 from csub.broker.policy import SANDBOX_SCRIPTS
 from csub.broker.resolve import ResolvedJob
+from csub.broker.state import REQUEST_NAME
 
 SOCKET_NAME = "csub.sock"
 EXIT_NO_BROKER = 93
@@ -157,10 +158,12 @@ def render_wrapper(
             f'SCRATCH={q(scratch_base)}/"$LSB_JOBID"; mkdir -p "$SCRATCH" || exit {EXIT_SCRATCH}'
         )
     lines += [
-        f'{broker_cmd} --serve "$JOB_DIR/{SOCKET_NAME}" &',
+        f'{broker_cmd} --serve "$JOB_DIR/{SOCKET_NAME}" --parent "$JOB_DIR" &',
         "BROKER_PID=$!",
         "trap 'kill \"$BROKER_PID\" 2>/dev/null' EXIT",
-        f'i=0; while [ ! -S "$JOB_DIR/{SOCKET_NAME}" ]; do '
+        # request.json is moved into $JOB_DIR once bsub has returned the job id; a fast start
+        # can get here first, and the broker needs it to confine child jobs.
+        f'i=0; while [ ! -S "$JOB_DIR/{SOCKET_NAME}" ] || [ ! -f "$JOB_DIR/{REQUEST_NAME}" ]; do '
         f'i=$((i + 1)); [ "$i" -gt 100 ] && exit {EXIT_NO_BROKER}; sleep 0.1; done',
     ]
     if job.sandbox == "bwrap":
