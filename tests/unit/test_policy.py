@@ -163,6 +163,11 @@ def test_policy_file_must_not_be_agent_writable(policy_dict, roots, tmp_home):
         load_policy(exposed, home=str(tmp_home), check_fs=False)
     fine = write_policy(tmp_home / ".config" / "csub" / "broker.toml", policy_dict)
     assert load_policy(fine, home=str(tmp_home), check_fs=False).source == str(fine)
+    # a symlink under $HOME whose target is under an allowed root is the same exposure
+    link = tmp_home / ".config" / "csub" / "linked.toml"
+    link.symlink_to(exposed)
+    with pytest.raises(PolicyError, match="policy file.*allowed root"):
+        load_policy(link, home=str(tmp_home), check_fs=False)
 
 
 def test_home_inside_allowed_root_is_ok(tmp_path: Path, policy_dict):

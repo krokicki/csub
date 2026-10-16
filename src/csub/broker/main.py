@@ -55,6 +55,7 @@ def build_context(policy_path: str | None, home_override: str | None) -> BrokerC
             os.path.dirname(os.path.abspath(csub.__file__)),
             sys.prefix,
             os.path.dirname(os.path.abspath(path)),  # every broker re-reads it per request
+            os.path.dirname(os.path.realpath(path)),  # and the target's dir, if a symlink
         )
     )
     return BrokerContext(

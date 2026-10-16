@@ -399,7 +399,9 @@ def parse_policy(  # noqa: C901 - one validator
         ("scratch_root", scratch_root),
     ]
     if source.startswith("/"):  # the policy file itself, when loaded from disk
+        # both where the name lives and where the content lives, should it be a symlink
         owned.append(("policy file", os.path.dirname(source)))
+        owned.append(("policy file", os.path.dirname(os.path.realpath(source))))
     for label, d in owned:
         d_real = os.path.realpath(d)
         if is_under(d_real, home_real):
