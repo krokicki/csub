@@ -260,6 +260,11 @@ def parse_policy(  # noqa: C901 - one validator
     home = normalize_abs(home)
 
     b = _section(data, "broker", _BROKER_KEYS, source)
+    if "max_pending_per_session" in (data.get("limits") or {}):
+        raise PolicyError(
+            f"{source}: limits.max_pending_per_session was renamed to max_pending_per_user "
+            "(the cap is now counted per user across sessions); rename the key"
+        )
     lim = _section(data, "limits", _LIMITS_KEYS, source)
     lsf = _section(data, "lsf", _LSF_KEYS, source)
 

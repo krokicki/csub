@@ -94,6 +94,10 @@ The answer contains `"ok":true`. Otherwise it names the policy line that is wron
 [policy section of the README](../README.md#policy) lists optional keys, such as `sandbox`,
 `readonly_roots`, `project` and `norc`.
 
+Upgrading an existing policy: `limits.max_pending_per_session` is now `max_pending_per_user`
+(the cap counts the user's pending jobs across all sessions). The broker refuses the old key
+by name; rename it.
+
 ## 3. Smoke test
 
 On the submit host, in a directory under an allowed root:

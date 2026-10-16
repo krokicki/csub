@@ -153,6 +153,11 @@ def test_broker_dirs_must_not_be_agent_writable(make_policy, roots, scripts_dir,
     assert p.state_dir == str(roots.outside / "state")
 
 
+def test_old_pending_cap_key_names_the_rename(make_policy):
+    with pytest.raises(PolicyError, match="renamed to max_pending_per_user"):
+        make_policy(limits={"max_pending_per_session": 5})
+
+
 def test_policy_file_must_not_be_agent_writable(policy_dict, roots, tmp_home):
     """A --policy under an allowed root could be rewritten from a job; every broker re-reads
     it per request, so that would hand the agent the whole policy."""
