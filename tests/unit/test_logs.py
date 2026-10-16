@@ -10,7 +10,7 @@ from csub.protocol import CsubError
 
 @pytest.fixture
 def tree(tmp_path):
-    cwd = tmp_path / "proj"
+    cwd = tmp_path / "grp" / "proj"  # grp: an agent-replaceable ancestor of the cwd
     jd = cwd / ".csub" / "jobs" / "7"
     jd.mkdir(parents=True)
     (jd / "stdout").write_text("a\nb\nc\n")
@@ -29,18 +29,27 @@ def test_reads_and_tails(tree):
         read_logs(str(cwd), "8")
 
 
-@pytest.mark.parametrize("where", ["file", "jobdir", "jobs", "csub", "cwd"])
+@pytest.mark.parametrize("where", ["file", "jobdir", "jobs", "csub", "cwd", "ancestor"])
 def test_symlinks_are_refused(tree, tmp_path, where):
     cwd, jd, secret = tree
     if where == "file":
         (jd / "stdout").unlink()
         (jd / "stdout").symlink_to(secret)
     else:
-        target = {"jobdir": jd, "jobs": jd.parent, "csub": jd.parent.parent, "cwd": cwd}[where]
+        target = {
+            "jobdir": jd,
+            "jobs": jd.parent,
+            "csub": jd.parent.parent,
+            "cwd": cwd,
+            "ancestor": cwd.parent,
+        }[where]
         alt = tmp_path / "alt"
         os.rename(target, alt)
         target.symlink_to(alt)
-        (secret.parent / "alt").joinpath(".csub", "jobs", "7").mkdir(parents=True, exist_ok=True)
+        # a complete output tree behind the symlink, so only the symlink refusal can fail this
+        rel = jd.relative_to(target)
+        (alt / rel).mkdir(parents=True, exist_ok=True)
+        (alt / rel / "stdout").write_text("planted\n")
     with pytest.raises(CsubError, match="refusing to read"):
         read_logs(str(cwd), "7")
     with pytest.raises(CsubError, match="refusing to read"):
@@ -52,6 +61,15 @@ def test_not_a_regular_file(tree):
     (jd / "stderr").mkdir()
     with pytest.raises(CsubError, match="not a regular file"):
         read_logs(str(cwd), "7", stream="stderr")
+
+
+def test_fifo_does_not_hang(tree):
+    """A FIFO with no writer blocks a plain open() forever; the reader must refuse, not wait."""
+    cwd, jd, _ = tree
+    (jd / "stdout").unlink()
+    os.mkfifo(jd / "stdout")
+    with pytest.raises(CsubError, match="not a regular file"):
+        read_logs(str(cwd), "7")
 
 
 def test_read_is_bounded(tree):

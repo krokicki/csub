@@ -4,8 +4,9 @@
 the agent's control. A reader outside a sandbox (a human on the submit host, an MCP server on
 a workstation) resolves symlinks with its own access, so a child job could otherwise hand its
 parent any file the reader can open. Each component is therefore opened relative to the one
-above it with ``O_NOFOLLOW``, only regular files are read, and at most ``MAX_BYTES`` of them.
-``cwd`` itself is the broker's realpath; only its last component is agent-replaceable.
+above it with ``O_NOFOLLOW``, starting from ``/`` (``cwd`` is a realpath, but a deeper cwd
+has agent-replaceable ancestors under the mount), only regular files are read, and at most
+``MAX_BYTES`` of them. Files are opened non-blocking so a FIFO cannot hang the reader.
 """
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ from pathlib import Path
 from csub.protocol import CsubError
 
 MAX_BYTES = 1 << 20  # the most a single read returns: the last MiB of the file
-_NOFOLLOW = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_NOFOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+# directories: O_PATH needs only search permission on ancestors such as /groups/<lab>
+_DIR = os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
 
 
 def job_dir(cwd: str, job_id: str) -> Path:
@@ -32,13 +35,12 @@ def _refuse(path: Path, e: OSError) -> CsubError:
 
 def _open_job_dir(cwd: str, job_id: str) -> int | None:
     """Descriptor on ``<cwd>/.csub/jobs/<id>``, or None if it does not exist yet."""
-    parent, base = os.path.split(cwd.rstrip("/") or "/")
-    comps = [c for c in (base, ".csub", "jobs", str(job_id)) if c]
-    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    comps = [c for c in cwd.split("/") if c] + [".csub", "jobs", str(job_id)]
+    fd = os.open("/", _DIR)
     try:
         for comp in comps:
             try:
-                nfd = os.open(comp, _NOFOLLOW | os.O_DIRECTORY, dir_fd=fd)
+                nfd = os.open(comp, _DIR, dir_fd=fd)
             except FileNotFoundError:
                 return None
             except OSError as e:  # ELOOP (symlink), ENOTDIR (a file in the way)
