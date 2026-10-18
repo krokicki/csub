@@ -52,6 +52,7 @@ def build_context(policy_path: str | None, home_override: str | None) -> BrokerC
         for p in (
             policy.state_dir,
             policy.sandbox_scripts_dir,
+            os.path.dirname(os.path.abspath(path)),
             os.path.dirname(os.path.abspath(csub.__file__)),
             sys.prefix,
         )

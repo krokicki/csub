@@ -49,8 +49,12 @@ csub CLI / MCP / Python ─unix──▶ csub-broker ──bsub──▶ LSF ─
   reached through an HTTP(S) allowlist proxy.
 - The broker and the wrapper never write to paths the agent can write to. Broker state lives
   in `~/.csub`, which is never mounted. Job output is written from inside the sandbox.
-- LSF spools the job script at submit time, so it cannot be changed afterwards. Agent text may
-  not contain `#BSUB` lines.
+- LSF spools the job script at submit time, so it cannot be changed afterwards. LSF honours a
+  `#BSUB` line anywhere in that script, so agent text may not contain one, and paths may not
+  contain control characters such as a newline.
+- Extra `bsub` flags (`lsf_extra`) are accepted only if the policy lists the flag by name. Flags
+  that run a command or read a file outside the sandbox (`-E`, `-L`, `-f`, `-jsdl`, ...) cannot
+  be listed.
 - Environment variables are set inside the sandbox, never on the `bsub` command line.
 - The policy file lives outside every mount and is read on every request.
 - Checks happen only in the broker, on an LSF host. `csub relay` forwards requests unchanged.
@@ -140,6 +144,7 @@ Policy rejections come back as tool errors, so the agent can fix its request.
 | `depends_on`   | job ids, or `{job_id, when}` with `when` = `done`, `ended`, `exit` |
 | `mounts`       | `{path, mode}`; filled in by the client from `CSUB_MOUNTS`         |
 | `session`      | job group; filled in by the client                                 |
+| `lsf_extra`    | extra `bsub` flags, one per entry (`-flag` or `-flag value`); only flags the policy lists |
 
 The broker answers with the job id and the resolved request: queue, slots, walltime, mounts and
 an estimated maximum cost.
@@ -172,8 +177,10 @@ allowed_images = ["ghcr.io/example/*:*"]
 allowed_roots  = ["/data/lab"]            # mounts must be below these; $HOME is always refused
 sandbox        = "podman"                 # or "bwrap" (no image, no rootless podman, no GPU jobs)
 readonly_roots = ["/data/lab/raw"]        # forced read-only
-allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]
+allowed_hosts  = ["pypi.org", "files.pythonhosted.org"]  # globs allowed; "*" also crosses dots
 env_allow      = ["OMP_NUM_THREADS"]
+lsf_extra_allow = []                      # bsub flags jobs may add, e.g. ["-R", "-sp"] or
+                                          # ["-R select\\[\\w+\\]"] (flag, then a regex for its value)
 
 [limits]
 max_slots = 64

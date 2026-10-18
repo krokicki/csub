@@ -303,6 +303,31 @@ def test_hosts(make_spec, policy, ctx):
         policy,
         ctx,
     )
+    # Pinned fnmatch semantics: '*' crosses dots (the sandbox proxy admits subdomains anyway),
+    # and '*.janelia.org' does not admit the bare domain.
+    assert resolve(make_spec(allow_hosts=["a.b.janelia.org"]), policy, ctx).allow_hosts == (
+        "a.b.janelia.org",
+    )
+    reject(
+        "policy_violation", "host janelia.org", make_spec(allow_hosts=["janelia.org"]), policy, ctx
+    )
+
+
+def test_control_characters_in_paths_are_refused(make_spec, project_dir):
+    """A directory whose name holds a newline is legal on Linux; as a mount or cwd it would put
+    a #BSUB line into the spooled wrapper, where LSF honours it anywhere. Refused before
+    resolve ever sees it."""
+    from csub.protocol import ProtocolError
+
+    evil = project_dir / "x\n#BSUB -E pwn.sh"
+    evil.mkdir()
+    with pytest.raises(ProtocolError, match="control character"):
+        make_spec(cwd=str(evil))
+    with pytest.raises(ProtocolError, match="control character"):
+        make_spec(mounts=[{"path": str(evil)}])
+    for bad in ("\t", "\r", "\x7f"):
+        with pytest.raises(ProtocolError, match="control character"):
+            make_spec(cwd=str(project_dir) + bad)
 
 
 def test_scratch(make_spec, policy, ctx, make_policy):
@@ -371,16 +396,56 @@ def test_depends_on(make_spec, policy, ctx):
 
 def test_lsf_extra(make_spec, policy, ctx, make_policy):
     reject("policy_violation", "not permitted", make_spec(lsf_extra=["-P proj"]), policy, ctx)
-    p = make_policy(broker={"lsf_extra_allow": [r"-P \w+", r"-R select\[\w+\]", ".*-x.*"]})
-    job = resolve(make_spec(lsf_extra=["-P proj", "-R select[avx2]"]), p, ctx)
-    assert job.lsf_extra_argv == ("-P", "proj", "-R", "select[avx2]")
-    assert job.bsub_args("/s")[-4:] == ["-P", "proj", "-R", "select[avx2]"]
-    reject("policy_violation", "does not match", make_spec(lsf_extra=["-m host"]), p, ctx)
-    p2 = make_policy(broker={"lsf_extra_allow": [".*"]})
-    reject("policy_violation", "set by the broker", make_spec(lsf_extra=["-q gpu_h100"]), p2, ctx)
-    reject("invalid_request", "not supported", make_spec(lsf_extra=["-Is"]), p2, ctx)
-    reject("invalid_request", "must start with a flag", make_spec(lsf_extra=["proj"]), p2, ctx)
-    reject("invalid_request", "quotation", make_spec(lsf_extra=["-P 'unterminated"]), p2, ctx)
+    p = make_policy(broker={"lsf_extra_allow": [r"-P \w+", r"-R select\[\w+\]", "-x"]})
+    job = resolve(make_spec(lsf_extra=["-P proj", "-R select[avx2]", "-x"]), p, ctx)
+    assert job.lsf_extra_argv == ("-P", "proj", "-R", "select[avx2]", "-x")
+    assert job.bsub_args("/s")[-5:] == ["-P", "proj", "-R", "select[avx2]", "-x"]
+    reject("policy_violation", "does not match", make_spec(lsf_extra=["-R rusage[m=1]"]), p, ctx)
+    reject("policy_violation", "does not match", make_spec(lsf_extra=["-P"]), p, ctx)
+    reject("policy_violation", "not permitted", make_spec(lsf_extra=["-sp 10"]), p, ctx)
+    reject("policy_violation", "set by the broker", make_spec(lsf_extra=["-q gpu_h100"]), p, ctx)
+    reject("policy_violation", "set by the broker", make_spec(lsf_extra=["-m host"]), p, ctx)
+    reject("invalid_request", "not supported", make_spec(lsf_extra=["-Is"]), p, ctx)
+    reject("invalid_request", "must start with a flag", make_spec(lsf_extra=["proj"]), p, ctx)
+    reject("invalid_request", "quotation", make_spec(lsf_extra=["-P 'unterminated"]), p, ctx)
+    reject("invalid_request", "empty value", make_spec(lsf_extra=["-P ''"]), p, ctx)
+
+
+def test_lsf_extra_judges_every_token(make_spec, ctx, make_policy):
+    """Nothing rides in behind a granted flag, and an attached value is not the granted flag."""
+    p = make_policy(broker={"lsf_extra_allow": ["-R"]})
+    for entry in ("-R x -E /tmp/pwn.sh", "-R x -m host", "-R x -q gpu_h100", "-R x -P victim"):
+        reject("invalid_request", "one value", make_spec(lsf_extra=[entry]), p, ctx)
+    reject("invalid_request", "second flag", make_spec(lsf_extra=["-R -E"]), p, ctx)
+    for entry in ("-Rselect[avx2]", "-qgpu_h100", "-E/tmp/pwn.sh", "-mhost"):
+        reject("policy_violation", "not permitted", make_spec(lsf_extra=[entry]), p, ctx)
+    quoted = make_spec(lsf_extra=["-R 'select[avx2] span[hosts=1]'"])
+    assert resolve(quoted, p, ctx).lsf_extra_argv == ("-R", "select[avx2] span[hosts=1]")
+
+
+def test_lsf_extra_unsafe_flags_are_never_granted(make_spec, ctx, make_policy):
+    """Flags that run a command or read a file outside the sandbox: no policy can list them,
+    and a request naming one is refused even under a permissive policy."""
+    from csub.broker.policy import LSF_EXTRA_OWNED, LSF_EXTRA_UNSAFE, PolicyError
+
+    for flag in sorted(LSF_EXTRA_UNSAFE | LSF_EXTRA_OWNED):
+        with pytest.raises(PolicyError, match="cannot be granted"):
+            make_policy(broker={"lsf_extra_allow": [flag]})
+    p = make_policy(broker={"lsf_extra_allow": ["-R", "-P"]})
+    for entry in (
+        "-E /bin/true",
+        "-Ep /bin/true",
+        "-L /bin/sh",
+        "-f '/tmp/x > /tmp/y'",
+        "-i /tmp/x",
+        "-jsdl /tmp/j.xml",
+        "-json /tmp/j.json",
+        "-yaml /tmp/j.yaml",
+        "-pack /tmp/jobs",
+        "-hostfile /tmp/hosts",
+        "-u someone@example.org",
+    ):
+        reject("invalid_request", "not supported", make_spec(lsf_extra=[entry]), p, ctx)
 
 
 # --- the resolved job -----------------------------------------------------------------
@@ -414,14 +479,17 @@ def test_ctx_defaults_use_real_filesystem(tmp_home):
 
 
 def test_policy_project(make_spec, ctx, make_policy):
-    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": [r"-R .*"]})
+    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": ["-R"]})
     job = resolve(make_spec(lsf_extra=["-R select[avx2]"]), p, ctx)
     assert job.lsf_extra_argv == ("-P", "proj", "-R", "select[avx2]")
     assert job.bsub_args("/state")[-4:] == ["-P", "proj", "-R", "select[avx2]"]
-    # with a project in the policy, a request may not supply its own -P (LSF would take the last)
-    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": [".*"]})
+    # with a project in the policy, a request may not supply its own -P (LSF would take the
+    # last), even when the policy lists -P; the attached form is simply not a granted flag
+    p = make_policy(lsf={"project": "proj"}, broker={"lsf_extra_allow": ["-P"]})
     reject("policy_violation", "set by the policy", make_spec(lsf_extra=["-P other"]), p, ctx)
-    reject("policy_violation", "set by the policy", make_spec(lsf_extra=["-Pother"]), p, ctx)
-    # without one, -P stays available through lsf_extra as before
-    p = make_policy(broker={"lsf_extra_allow": [".*"]})
+    reject("policy_violation", "not permitted", make_spec(lsf_extra=["-Pother"]), p, ctx)
+    # without one, -P is available through lsf_extra only if the policy lists it
+    p = make_policy(broker={"lsf_extra_allow": ["-P"]})
     assert resolve(make_spec(lsf_extra=["-P other"]), p, ctx).lsf_extra_argv == ("-P", "other")
+    p = make_policy(broker={"lsf_extra_allow": ["-R"]})
+    reject("policy_violation", "not permitted", make_spec(lsf_extra=["-P other"]), p, ctx)

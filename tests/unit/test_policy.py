@@ -90,7 +90,9 @@ def test_roots_rules(make_policy):
 def test_misc_rules(make_policy):
     _reject(make_policy, "hostname", broker={"allowed_hosts": ["PyPI.org"]})
     _reject(make_policy, "env_allow", broker={"env_allow": ["BAD-NAME"]})
-    _reject(make_policy, "invalid regex", broker={"lsf_extra_allow": ["("]})
+    _reject(make_policy, "invalid regex", broker={"lsf_extra_allow": ["-R ("]})
+    _reject(make_policy, "flag name", broker={"lsf_extra_allow": [".*"]})
+    _reject(make_policy, "flag name", broker={"lsf_extra_allow": ["-R .*", "R"]})
     _reject(make_policy, "forbidden_name_tokens", broker={"forbidden_name_tokens": ["in t"]})
     _reject(make_policy, "max_name_len", broker={"max_name_len": 3})
     _reject(make_policy, ">= 0", limits={"max_estimated_cost_usd": -1})
@@ -130,7 +132,9 @@ def test_queue_rules(make_policy, policy_dict):
         )
 
 
-def test_broker_dirs_must_not_be_agent_writable(make_policy, roots, scripts_dir, tmp_home):
+def test_broker_dirs_must_not_be_agent_writable(
+    make_policy, roots, scripts_dir, tmp_home, policy_dict
+):
     # Under $HOME is fine (the fixture default); under an allowed root but outside $HOME is not.
     exposed = roots.allowed / "scripts"
     exposed.mkdir()
@@ -151,6 +155,12 @@ def test_broker_dirs_must_not_be_agent_writable(make_policy, roots, scripts_dir,
     # Outside every allowed root and outside home is also fine.
     p = make_policy(broker={"state_dir": str(roots.outside / "state")})
     assert p.state_dir == str(roots.outside / "state")
+    # The policy file itself: an agent that can edit it owns the broker.
+    exposed_policy = write_policy(roots.allowed / "csub" / "broker.toml", policy_dict)
+    with pytest.raises(PolicyError, match="policy file.*allowed root"):
+        load_policy(exposed_policy, home=str(tmp_home))
+    ok_policy = write_policy(roots.outside / "csub" / "broker.toml", policy_dict)
+    assert load_policy(ok_policy, home=str(tmp_home)).source == str(ok_policy)
 
 
 def test_home_inside_allowed_root_is_ok(tmp_path: Path, policy_dict):
@@ -189,10 +199,19 @@ def test_fs_checks(make_policy, scripts_dir, tmp_home):
     assert make_policy(lsf={"profile": str(prof)}).lsf.profile == str(prof)
 
 
-def test_lsf_extra_patterns_compile(make_policy):
-    p = make_policy(broker={"lsf_extra_allow": [r"-P \w+"]})
-    assert isinstance(p.lsf_extra_allow[0], re.Pattern)
+def test_lsf_extra_allow_entries(make_policy):
+    p = make_policy(broker={"lsf_extra_allow": [r"-P \w+", "-R", "-x", "-R  select\\[.*\\] "]})
+    assert [(f.flag, f.value.pattern if f.value else None) for f in p.lsf_extra_allow] == [
+        ("-P", r"\w+"),
+        ("-R", None),
+        ("-x", None),
+        ("-R", r"select\[.*\]"),
+    ]
+    assert isinstance(p.lsf_extra_allow[0].value, re.Pattern)
     assert p.probe_summary()["lsf_extra_enabled"] is True
+    # flags that run outside the sandbox, or that the broker owns, cannot be granted at all
+    _reject(make_policy, "cannot be granted", broker={"lsf_extra_allow": ["-E"]})
+    _reject(make_policy, "cannot be granted", broker={"lsf_extra_allow": ["-R", "-q short"]})
 
 
 def test_sandbox_setting(make_policy, policy):

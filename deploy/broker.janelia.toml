@@ -18,6 +18,7 @@ allowed_images = [
 allowed_roots = ["/groups/CHANGEME", "/nrs/CHANGEME"]
 denied_roots = []
 readonly_roots = []
+# Hostnames or fnmatch globs; "*" also crosses dots ("*.janelia.org" admits a.b.janelia.org).
 allowed_hosts = [
   "pypi.org",
   "files.pythonhosted.org",
@@ -29,6 +30,10 @@ scratch_root = "/scratch"
 keep_id = true
 inject_client = true
 env_allow = ["OMP_NUM_THREADS", "ANTHROPIC_*"]
+# bsub flags jobs may add, one per entry: "-flag" or "-flag <regex the value must match>",
+# e.g. ["-R", "-sp"] or ["-R select\\[\\w+\\]"]. Flags that run a command or read a file
+# outside the sandbox (-E, -Ep, -L, -f, -jsdl, -json, ...) and broker-owned flags (-q, -n,
+# -W, -m, ...) cannot be listed; the broker refuses to load such a policy.
 lsf_extra_allow = []
 forbidden_name_tokens = ["spark", "janelia", "master", "int"]
 

@@ -5,13 +5,20 @@ from __future__ import annotations
 import os
 import re
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def normalize_abs(path: str) -> str:
-    """Return ``os.path.normpath(path)``; raise ``ValueError`` unless ``path`` is absolute."""
+    """Return ``os.path.normpath(path)``; raise ``ValueError`` unless ``path`` is absolute.
+
+    Control characters (NUL, newline, tab, ...) are refused: paths land in the spooled job
+    script, and LSF honours a ``#BSUB`` line wherever it appears in that script.
+    """
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError(f"not an absolute path: {path!r}")
-    if "\0" in path:
-        raise ValueError("path contains NUL")
+    m = _CONTROL_RE.search(path)
+    if m:
+        raise ValueError(f"path contains a control character (U+{ord(m.group()):04X})")
     return os.path.normpath(path)
 
 

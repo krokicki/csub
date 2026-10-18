@@ -9,6 +9,11 @@ def test_normalize_abs():
         normalize_abs("relative/path")
     with pytest.raises(ValueError):
         normalize_abs("/a\0b")
+    # control characters: a newline in a path would become a line of the spooled job script
+    for bad in ("/a\nb", "/a\tb", "/a\rb", "/a\x7fb", "/a\x1bb"):
+        with pytest.raises(ValueError, match="control character"):
+            normalize_abs(bad)
+    assert normalize_abs("/a b/c:d,e") == "/a b/c:d,e"  # spaces and punctuation are fine here
 
 
 def test_is_under():

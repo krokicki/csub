@@ -167,6 +167,9 @@ class Mount:
             path = normalize_abs(_str(d["path"], f"{where}.path", min_len=1))
         except ValueError as e:
             raise ProtocolError(f"{where}.path: {e}") from None
+        if ":" in path or "," in path:
+            # CSUB_MOUNTS is "path:mode,path:mode"; a child could not parse such a path.
+            raise ProtocolError(f"{where}.path: must not contain ':' or ','")
         mode = d.get("mode", "rw")
         if mode not in MOUNT_MODES:
             raise ProtocolError(f"{where}.mode: expected 'rw' or 'ro', got {mode!r}")
@@ -784,7 +787,8 @@ JOBSPEC_SCHEMA: dict[str, Any] = {
         },
         "lsf_extra": {
             "description": (
-                "Extra bsub flags (one complete flag per entry); normally not permitted by policy."
+                "Extra bsub flags, one per entry as '-flag' or '-flag value'; only flags the "
+                "policy lists are accepted (normally none)."
             ),
             "type": "array",
             "items": {"type": "string"},

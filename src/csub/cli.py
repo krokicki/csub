@@ -125,7 +125,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--script", metavar="FILE|-", help="with --shell: read the body from FILE or stdin"
     )
-    s.add_argument("--lsf-extra", action="append", default=[], metavar="FLAG")
+    s.add_argument(
+        "--lsf-extra",
+        action="append",
+        default=[],
+        metavar="FLAG",
+        help="extra bsub flag, '-flag' or '-flag value' (repeatable); only flags the policy lists",
+    )
     s.add_argument("--wait", action="store_true", help="wait for the job and show its output")
     s.add_argument("--timeout", type=float, help="with --wait: give up after this many seconds")
     s.add_argument("--tail", type=int, default=20, help="with --wait: lines of output to show")

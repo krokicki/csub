@@ -31,6 +31,33 @@ class PolicyError(CsubError):
 SANDBOX_SCRIPTS = {"podman": "podman-run.sh", "bwrap": "sandbox-run.sh"}
 SANDBOXES = tuple(SANDBOX_SCRIPTS)
 
+# bsub flags that no policy can grant through lsf_extra_allow. These run a command or read a
+# file outside the sandbox, as the user: pre/post-execution, login shell, file transfer, the
+# job's stdin, option files (which can carry any of the others), packed submissions, host
+# files, esub arguments, data staging, interactive modes, mail to an agent-chosen address.
+LSF_EXTRA_UNSAFE = frozenset(
+    {
+        "-E", "-Ep", "-L", "-f", "-i", "-is",
+        "-jsdl", "-jsdl_strict", "-json", "-yaml", "-pack", "-hostfile",
+        "-a", "-data", "-stage", "-Zs",
+        "-I", "-Ip", "-Is", "-IS", "-ISp", "-ISs", "-IX", "-K", "-XF", "-tty",
+        "-app", "-env", "-u",
+    }
+)  # fmt: skip
+# bsub flags the broker sets itself; granting them would let the agent override policy.
+LSF_EXTRA_OWNED = frozenset(
+    {"-q", "-n", "-W", "-gpu", "-J", "-g", "-o", "-oo", "-e", "-eo", "-w", "-cwd", "-m"}
+)
+_LSF_EXTRA_FLAG_RE = re.compile(r"^-[A-Za-z][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class LsfExtraFlag:
+    """One granted bsub flag: ``-R`` or ``-R <regex the value must fullmatch>``."""
+
+    flag: str
+    value: re.Pattern[str] | None = None  # None: any single value (or none) is accepted
+
 
 @dataclass(frozen=True)
 class QueuePolicy:
@@ -92,7 +119,7 @@ class Policy:
     inject_client: bool = True
     sandbox: str = "podman"  # bwrap cannot pass GPUs through: GPU requests are then refused
     env_allow: tuple[str, ...] = ()
-    lsf_extra_allow: tuple[re.Pattern[str], ...] = ()
+    lsf_extra_allow: tuple[LsfExtraFlag, ...] = ()
     forbidden_name_tokens: tuple[str, ...] = DEFAULT_FORBIDDEN_NAME_TOKENS
     max_name_len: int = 64
     limits: Limits = field(default_factory=Limits)
@@ -313,12 +340,28 @@ def parse_policy(  # noqa: C901 - one validator
         if not _ENV_PATTERN_RE.match(pat):
             raise PolicyError(f"{where}.env_allow: invalid pattern {pat!r}")
 
-    compiled: list[re.Pattern[str]] = []
-    for pat in b.get("lsf_extra_allow", []):
-        try:
-            compiled.append(re.compile(pat))
-        except re.error as e:
-            raise PolicyError(f"{where}.lsf_extra_allow: invalid regex {pat!r}: {e}") from None
+    compiled: list[LsfExtraFlag] = []
+    for entry in b.get("lsf_extra_allow", []):
+        flag, _, value_re = entry.strip().partition(" ")
+        if not _LSF_EXTRA_FLAG_RE.match(flag):
+            raise PolicyError(
+                f"{where}.lsf_extra_allow: entry {entry!r} must be a bsub flag name, optionally "
+                'followed by a regex for its value, e.g. "-R" or "-R select\\[\\w+\\]"'
+            )
+        if flag in LSF_EXTRA_UNSAFE or flag in LSF_EXTRA_OWNED:
+            raise PolicyError(
+                f"{where}.lsf_extra_allow: bsub flag {flag} cannot be granted; it runs outside "
+                "the sandbox or is set by the broker"
+            )
+        pat = None
+        if value_re.strip():
+            try:
+                pat = re.compile(value_re.strip())
+            except re.error as e:
+                raise PolicyError(
+                    f"{where}.lsf_extra_allow: invalid regex {value_re.strip()!r}: {e}"
+                ) from None
+        compiled.append(LsfExtraFlag(flag, pat))
 
     tokens = tuple(
         t.lower() for t in b.get("forbidden_name_tokens", list(DEFAULT_FORBIDDEN_NAME_TOKENS))
@@ -391,18 +434,21 @@ def parse_policy(  # noqa: C901 - one validator
     # --- trust-boundary placement of broker-owned directories ---
     home_real = os.path.realpath(home)
     roots_real = [os.path.realpath(r) for r in allowed_roots]
-    for label, d in (
-        ("state_dir", state_dir),
-        ("sandbox_scripts_dir", scripts_dir),
-        ("scratch_root", scratch_root),
-    ):
+    placed = [
+        (f"{where}.state_dir", state_dir),
+        (f"{where}.sandbox_scripts_dir", scripts_dir),
+        (f"{where}.scratch_root", scratch_root),
+    ]
+    if os.path.isabs(source) and os.path.isfile(source):
+        placed.append((f"{source}: policy file", source))  # the file itself, when loaded from disk
+    for label, d in placed:
         d_real = os.path.realpath(d)
         if is_under(d_real, home_real):
             continue
         hit = [r for r in roots_real if is_under(d_real, r)]
         if hit:
             raise PolicyError(
-                f"{where}.{label}: {d} lies under allowed root {hit[0]} but not under $HOME; "
+                f"{label}: {d} lies under allowed root {hit[0]} but not under $HOME; "
                 "an agent could write to it"
             )
     if check_fs:

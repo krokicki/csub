@@ -21,38 +21,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from csub._paths import glob_to_regex, image_registry, is_under
-from csub.broker.policy import Policy, QueuePolicy
+from csub.broker.policy import LSF_EXTRA_OWNED, LSF_EXTRA_UNSAFE, Policy, QueuePolicy
 from csub.protocol import CsubError, Dependency, JobSpec, contains_bsub_directive
 
 RESERVED_ENV_KEYS = frozenset(
     {"HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "SHELL", "CUDA_VISIBLE_DEVICES"}
 )
 RESERVED_ENV_PREFIXES = ("LSB_", "LSF_", "CSUB_")
-
-# Flags the broker emits itself; passthrough of these would let the agent override policy.
-OWNED_BSUB_FLAGS = frozenset(
-    {
-        "-q",
-        "-n",
-        "-W",
-        "-gpu",
-        "-J",
-        "-g",
-        "-o",
-        "-oo",
-        "-e",
-        "-eo",
-        "-w",
-        "-cwd",
-        "-i",
-        "-is",
-        "-env",
-    }
-)
-# Flags whose semantics csub does not support at all.
-UNSUPPORTED_BSUB_FLAGS = frozenset(
-    {"-I", "-Ip", "-Is", "-IS", "-ISp", "-ISs", "-IX", "-XF", "-K", "-app", "-m", "-tty", "-env"}
-)
 
 _NAME_BAD_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 _NAME_SPLIT = re.compile(r"[_.-]+")
@@ -347,7 +322,8 @@ def check_env(env: dict[str, str], policy: Policy) -> dict[str, str]:
 def check_hosts(hosts: tuple[str, ...], policy: Policy) -> tuple[str, ...]:
     out: list[str] = []
     for h in hosts:
-        if not any(h == pat or fnmatch.fnmatchcase(h, pat) for pat in policy.allowed_hosts):
+        # fnmatch globs: '*' also crosses dots, so '*.janelia.org' admits 'a.b.janelia.org'.
+        if not any(fnmatch.fnmatchcase(h, pat) for pat in policy.allowed_hosts):
             raise _policy(f"host {h} is not permitted; allowed: " + ", ".join(policy.allowed_hosts))
         if h not in out:
             out.append(h)
@@ -365,42 +341,78 @@ def check_depends(
 
 
 def check_lsf_extra(extra: tuple[str, ...], policy: Policy) -> tuple[str, ...]:
+    """One bsub flag per entry, ``-flag`` or ``-flag value``; the policy lists the flags.
+
+    Every token is judged: the flag must equal a granted name exactly (so ``-qshort`` or
+    ``-R x -E cmd`` cannot ride in behind a granted ``-R``), and the value, if any, must not
+    look like a flag and must match the policy's regex for that flag when it has one.
+    """
     if not extra:
         return ()
     if not policy.lsf_extra_allow:
         raise _policy("lsf_extra is not permitted by policy")
+    granted = {f.flag: f for f in policy.lsf_extra_allow}
     argv: list[str] = []
     for item in extra:
-        if not any(p.fullmatch(item) for p in policy.lsf_extra_allow):
-            raise _policy(f"lsf_extra entry {item!r} does not match any permitted pattern")
         try:
             parts = shlex.split(item)
         except ValueError as e:
             raise _invalid(f"lsf_extra entry {item!r}: {e}") from None
         if not parts:
             raise _invalid("lsf_extra entry is empty")
-        if parts[0] in UNSUPPORTED_BSUB_FLAGS:
-            raise _invalid(f"bsub flag {parts[0]} is not supported")
-        if parts[0] in OWNED_BSUB_FLAGS:
-            raise _policy(f"bsub flag {parts[0]} is set by the broker and cannot be overridden")
-        if policy.lsf.project and parts[0].startswith("-P"):
+        flag, values = parts[0], parts[1:]
+        if not flag.startswith("-"):
+            raise _invalid(f"lsf_extra entry {item!r} must start with a flag")
+        if flag in LSF_EXTRA_UNSAFE:
+            raise _invalid(f"bsub flag {flag} is not supported; it would run outside the sandbox")
+        if flag in LSF_EXTRA_OWNED:
+            raise _policy(f"bsub flag {flag} is set by the broker and cannot be overridden")
+        rule = granted.get(flag)
+        if rule is None:
+            raise _policy(
+                f"bsub flag {flag} is not permitted by policy; allowed: "
+                + ", ".join(sorted(granted))
+            )
+        if flag == "-P" and policy.lsf.project:
             # LSF takes the last -P; with lsf.project set, the policy's must be the only one.
             raise _policy(
                 "bsub flag -P is set by the policy (lsf.project) and cannot be overridden"
             )
-        if not parts[0].startswith("-"):
-            raise _invalid(f"lsf_extra entry {item!r} must start with a flag")
-        argv += parts
+        if len(values) > 1:
+            raise _invalid(
+                f"lsf_extra entry {item!r}: one flag and at most one value per entry "
+                "(quote a value that contains spaces)"
+            )
+        value = values[0] if values else None
+        if value is not None and value.startswith("-"):
+            raise _invalid(f"lsf_extra entry {item!r}: value {value!r} looks like a second flag")
+        if value == "":
+            raise _invalid(f"lsf_extra entry {item!r}: empty value")
+        if rule.value is not None and (value is None or not rule.value.fullmatch(value)):
+            raise _policy(
+                f"lsf_extra entry {item!r}: the value of {flag} does not match the permitted "
+                f"pattern {rule.value.pattern!r}"
+            )
+        argv.append(flag)
+        if value is not None:
+            argv.append(value)
     return tuple(argv)
 
 
-def check_no_directives(spec: JobSpec, name: str) -> None:
+def check_no_directives(
+    spec: JobSpec, name: str, cwd: str = "", mounts: tuple[ResolvedMount, ...] = ()
+) -> None:
+    """No agent text may form a ``#BSUB`` line: LSF honours one anywhere in the spooled script.
+
+    Paths cannot contain newlines (refused by the protocol), so for cwd and mounts this is
+    belt and braces; command and name are the fields that can carry one.
+    """
     texts = [spec.command] if isinstance(spec.command, str) else list(spec.command)
-    texts.append(name)
+    texts += [name, cwd, *(m.path for m in mounts)]
     for t in texts:
         if contains_bsub_directive(t):
             raise _invalid(
-                "command contains a #BSUB line; LSF would read it as a submission option"
+                "request contains a #BSUB line; LSF would read it as a submission option"
             )
 
 
@@ -462,7 +474,7 @@ def resolve(spec: JobSpec, policy: Policy, ctx: ResolveContext) -> ResolvedJob:
 
     name = sanitize_name(spec.name, spec.command, max_len=policy.max_name_len)
     check_name(name, policy, ctx.user)
-    check_no_directives(spec, name)
+    check_no_directives(spec, name, cwd, mounts)
     deps = check_depends(spec.depends_on, ctx, session)
     extra = check_lsf_extra(spec.lsf_extra, policy)
 

@@ -48,4 +48,6 @@ csub wait "$NJOB" --timeout 1800
 echo "== expected rejections"
 if csub submit --image localhost/evil:1 -- true; then echo "FAIL: localhost image accepted"; exit 1; fi
 if csub submit --allow evil.example -- true; then echo "FAIL: unknown host accepted"; exit 1; fi
+# -E would run a command on the execution host outside the sandbox; refused whatever the policy.
+if csub submit --lsf-extra '-E /bin/true' -- true; then echo "FAIL: bsub -E accepted"; exit 1; fi
 echo "== all good"
